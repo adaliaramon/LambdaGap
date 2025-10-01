@@ -269,7 +269,9 @@ class LambdarankNDCG : public RankingObjective {
       std::nth_element(
           sorted_idx.begin(), sorted_idx.begin() + truncation_level_ - 1, sorted_idx.end(),
           [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
-      const auto [worst, best] = std::minmax_element(score, score + cnt);
+      const auto minmax = std::minmax_element(score, score + cnt);
+      const auto worst = minmax.first;
+      const auto best = minmax.second;
       best_score = *best;
       worst_score = *worst;
     } else if (lambdarank_target_ == LambdaRankTarget::BIN_RANKNET ||
@@ -278,7 +280,9 @@ class LambdarankNDCG : public RankingObjective {
       lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_ARP2
     ) {
       // No need to sort, since weighting factor does not depend neither on i nor j
-      const auto [worst, best] = std::minmax_element(score, score + cnt);
+      const auto minmax = std::minmax_element(score, score + cnt);
+      const auto worst = minmax.first;
+      const auto best = minmax.second;
       best_score = *best;
       worst_score = *worst;
     } else {

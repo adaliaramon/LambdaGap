@@ -19,6 +19,27 @@
 
 namespace LightGBM {
 
+enum class LambdaRankTarget {
+  NDCG,
+  LAMBDALOSS_NDCG,
+  LAMBDALOSS_NDCG_PLUS_PLUS,
+  BNDCG,
+  LAMBDALOSS_BNDCG,
+  LAMBDALOSS_BNDCG_PLUS_PLUS,
+  PRECISION,
+  ARP_K,
+  LAMBDALOSS_ARP1,
+  LAMBDALOSS_ARP2,
+  RANKNET,
+  BIN_RANKNET,
+  LAMBDAGAP_S,
+  LAMBDAGAP_X,
+  LAMBDAGAP_S_PLUS,
+  LAMBDAGAP_X_PLUS,
+  LAMBDAGAP_S_PLUS_PLUS,
+  LAMBDAGAP_X_PLUS_PLUS,
+};
+
 /*!
  * \brief Objective function for Ranking
  */
@@ -54,6 +75,8 @@ class RankingObjective : public ObjectiveFunction {
     num_queries_ = metadata.num_queries();
     // initialize position bias vectors
     pos_biases_.resize(num_position_ids_, 0.0);
+    // Allocate a vector of size num_queries_ to store the number of effective pairs per query
+    effective_pairs_.resize(num_queries_, 0.0);
   }
 
   void GetGradients(const double* score, const data_size_t num_sampled_queries, const data_size_t* sampled_query_indices,
@@ -81,6 +104,17 @@ class RankingObjective : public ObjectiveFunction {
         }
       }
     }
+
+    // Log the average of effective_pairs_ over all queries
+    double avg_effective_pairs = 0.0;
+    for (data_size_t i = 0; i < num_queries_; ++i) {
+      if (std::isnan(effective_pairs_[i])) {
+        continue;
+      }
+      avg_effective_pairs += effective_pairs_[i];
+    }
+    Log::Debug("Average effective pairs per query: %.4f%%", 100.0 * avg_effective_pairs / num_queries_);
+
     if (num_position_ids_ > 0) {
       UpdatePositionBiasFactors(gradients, hessians);
     }
@@ -130,6 +164,8 @@ class RankingObjective : public ObjectiveFunction {
   double learning_rate_;
   /*! \brief Position bias regularization */
   double position_bias_regularization_;
+  /*! \brief Effective pairs per query */
+  mutable std::vector<double> effective_pairs_;
 };
 
 /*!
@@ -143,14 +179,42 @@ class LambdarankNDCG : public RankingObjective {
         norm_(config.lambdarank_norm),
         truncation_level_(config.lambdarank_truncation_level) {
     label_gain_ = config.label_gain;
+    std::map<std::string, LambdaRankTarget> lambdarank_target_map = {
+      {"ndcg", LambdaRankTarget::NDCG},
+      {"lambdaloss-ndcg", LambdaRankTarget::LAMBDALOSS_NDCG},
+      {"lambdaloss-ndcg-plus-plus", LambdaRankTarget::LAMBDALOSS_NDCG_PLUS_PLUS},
+      {"bndcg", LambdaRankTarget::BNDCG},
+      {"lambdaloss-bndcg", LambdaRankTarget::LAMBDALOSS_BNDCG},
+      {"lambdaloss-bndcg-plus-plus", LambdaRankTarget::LAMBDALOSS_BNDCG_PLUS_PLUS},
+      {"precision", LambdaRankTarget::PRECISION},
+      {"arpk", LambdaRankTarget::ARP_K},
+      {"lambdaloss-arp1", LambdaRankTarget::LAMBDALOSS_ARP1},
+      {"lambdaloss-arp2", LambdaRankTarget::LAMBDALOSS_ARP2},
+      {"ranknet", LambdaRankTarget::RANKNET},
+      {"bin-ranknet", LambdaRankTarget::BIN_RANKNET},
+      {"lambdagap-s", LambdaRankTarget::LAMBDAGAP_S},
+      {"lambdagap-x", LambdaRankTarget::LAMBDAGAP_X},
+      {"lambdagap-s-plus", LambdaRankTarget::LAMBDAGAP_S_PLUS},
+      {"lambdagap-x-plus", LambdaRankTarget::LAMBDAGAP_X_PLUS},
+      {"lambdagap-s-plus-plus", LambdaRankTarget::LAMBDAGAP_S_PLUS_PLUS},
+      {"lambdagap-x-plus-plus", LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS}
+    };
+    if (lambdarank_target_map.count(config.lambdarank_target) == 0) {
+      Log::Fatal("Unknown lambdarank target '%s'", config.lambdarank_target.c_str());
+    } else {
+      Log::Info("Using lambdarank objective with target '%s'", config.lambdarank_target.c_str());
+    }
+    lambdarank_target_ = lambdarank_target_map[config.lambdarank_target];
     // initialize DCG calculator
     DCGCalculator::DefaultLabelGain(&label_gain_);
     DCGCalculator::Init(label_gain_);
     sigmoid_table_.clear();
     inverse_max_dcgs_.clear();
+    inverse_max_bdcgs_.clear();
     if (sigmoid_ <= 0.0) {
       Log::Fatal("Sigmoid param %f should be greater than zero", sigmoid_);
     }
+    lambdagap_weight_ = config.lambdagap_weight;
   }
 
   explicit LambdarankNDCG(const std::vector<std::string>& strs)
@@ -163,6 +227,7 @@ class LambdarankNDCG : public RankingObjective {
     DCGCalculator::CheckMetadata(metadata, num_queries_);
     DCGCalculator::CheckLabel(label_, num_data_);
     inverse_max_dcgs_.resize(num_queries_);
+    inverse_max_bdcgs_.resize(num_queries_);
 #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static)
     for (data_size_t i = 0; i < num_queries_; ++i) {
       inverse_max_dcgs_[i] = DCGCalculator::CalMaxDCGAtK(
@@ -171,6 +236,14 @@ class LambdarankNDCG : public RankingObjective {
 
       if (inverse_max_dcgs_[i] > 0.0) {
         inverse_max_dcgs_[i] = 1.0f / inverse_max_dcgs_[i];
+      }
+
+      inverse_max_bdcgs_[i] = DCGCalculator::CalMaxBDCGAtK(
+          truncation_level_, label_ + query_boundaries_[i],
+          query_boundaries_[i + 1] - query_boundaries_[i]);
+
+      if (inverse_max_bdcgs_[i] > 0.0) {
+        inverse_max_bdcgs_[i] = 1.0f / inverse_max_bdcgs_[i];
       }
     }
     // construct Sigmoid table to speed up Sigmoid transform
@@ -181,8 +254,6 @@ class LambdarankNDCG : public RankingObjective {
                                       const label_t* label, const double* score,
                                       score_t* lambdas,
                                       score_t* hessians) const override {
-    // get max DCG on current query
-    const double inverse_max_dcg = inverse_max_dcgs_[query_id];
     // initialize with zero
     for (data_size_t i = 0; i < cnt; ++i) {
       lambdas[i] = 0.0f;
@@ -193,30 +264,117 @@ class LambdarankNDCG : public RankingObjective {
     for (data_size_t i = 0; i < cnt; ++i) {
       sorted_idx[i] = i;
     }
-    std::stable_sort(
-        sorted_idx.begin(), sorted_idx.end(),
-        [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
-    // get best and worst score
-    const double best_score = score[sorted_idx[0]];
-    data_size_t worst_idx = cnt - 1;
-    if (worst_idx > 0 && score[sorted_idx[worst_idx]] == kMinScore) {
-      worst_idx -= 1;
+    double best_score, worst_score;
+    if (lambdarank_target_ == LambdaRankTarget::PRECISION) {
+      std::nth_element(
+          sorted_idx.begin(), sorted_idx.begin() + truncation_level_ - 1, sorted_idx.end(),
+          [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
+      const auto [worst, best] = std::minmax_element(score, score + cnt);
+      best_score = *best;
+      worst_score = *worst;
+    } else if (lambdarank_target_ == LambdaRankTarget::BIN_RANKNET ||
+      lambdarank_target_ == LambdaRankTarget::RANKNET ||
+      lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_ARP1 ||
+      lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_ARP2
+    ) {
+      // No need to sort, since weighting factor does not depend neither on i nor j
+      const auto [worst, best] = std::minmax_element(score, score + cnt);
+      best_score = *best;
+      worst_score = *worst;
+    } else {
+      std::stable_sort(
+          sorted_idx.begin(), sorted_idx.end(),
+          [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
+      best_score = score[sorted_idx[0]];
+      data_size_t worst_idx = cnt - 1;
+      if (worst_idx > 0 && score[sorted_idx[worst_idx]] == kMinScore) {
+        worst_idx -= 1;
+      }
+      worst_score = score[sorted_idx[worst_idx]];
     }
-    const double worst_score = score[sorted_idx[worst_idx]];
+    // get best and worst score
     double sum_lambdas = 0.0;
-    // start accumulate lambdas by pairs that contain at least one document above truncation level
-    for (data_size_t i = 0; i < cnt - 1 && i < truncation_level_; ++i) {
+    int count_lambdas = 0;
+
+    // Pairs must include at least one document within the top k for some metrics
+    data_size_t i_end;
+    switch (lambdarank_target_) {
+      case LambdaRankTarget::NDCG:
+      case LambdaRankTarget::LAMBDALOSS_NDCG:
+      case LambdaRankTarget::LAMBDALOSS_NDCG_PLUS_PLUS:
+      case LambdaRankTarget::BNDCG:
+      case LambdaRankTarget::LAMBDALOSS_BNDCG:
+      case LambdaRankTarget::LAMBDALOSS_BNDCG_PLUS_PLUS:
+      case LambdaRankTarget::PRECISION:
+        i_end = std::min(cnt - 1, truncation_level_);
+        break;
+      default:
+        i_end = cnt - 1;
+    }
+
+    for (data_size_t i = 0; i < i_end; ++i) {
       if (score[sorted_idx[i]] == kMinScore) {
         continue;
       }
-      for (data_size_t j = i + 1; j < cnt; ++j) {
+
+      // Exclude pairs guaranteed to have 0 contribution to the gradient
+      data_size_t start;
+      data_size_t end;
+      switch (lambdarank_target_) {
+        case LambdaRankTarget::PRECISION:
+          start = truncation_level_;
+          end = cnt;
+          break;
+        case LambdaRankTarget::ARP_K:
+        case LambdaRankTarget::LAMBDAGAP_S_PLUS:
+        case LambdaRankTarget::LAMBDAGAP_X_PLUS:
+        case LambdaRankTarget::LAMBDAGAP_S_PLUS_PLUS:
+        case LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS:
+          start = std::max(i + 1, truncation_level_);
+          end = cnt;
+          break;
+        case LambdaRankTarget::LAMBDAGAP_S:
+          start = i + truncation_level_;
+          end = std::min(start + 1, cnt);
+          break;
+        case LambdaRankTarget::LAMBDAGAP_X:
+          start = i + truncation_level_;
+          end = cnt;
+          break;
+        default:
+          start = i + 1;
+          end = cnt;
+      }
+
+      for (data_size_t j = start; j < end; ++j) {
         if (score[sorted_idx[j]] == kMinScore) {
           continue;
         }
         // skip pairs with the same labels
-        if (label[sorted_idx[i]] == label[sorted_idx[j]]) {
+        const score_t label_i = label[sorted_idx[i]];
+        const score_t label_j = label[sorted_idx[j]];
+        if (label_i == label_j) {
           continue;
         }
+
+        // Skip pairs where none of the labels is 0, if the target is binary
+        if (label_i > 0 && label_j > 0) {
+          if (lambdarank_target_ == LambdaRankTarget::PRECISION ||
+              lambdarank_target_ == LambdaRankTarget::BNDCG ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_BNDCG ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_BNDCG_PLUS_PLUS ||
+              lambdarank_target_ == LambdaRankTarget::ARP_K ||
+              lambdarank_target_ == LambdaRankTarget::BIN_RANKNET ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_X ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_X_PLUS ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS_PLUS ||
+              lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS) {
+            continue;
+          }
+        }
+
         data_size_t high_rank, low_rank;
         if (label[sorted_idx[i]] > label[sorted_idx[j]]) {
           high_rank = i;
@@ -226,40 +384,129 @@ class LambdarankNDCG : public RankingObjective {
           low_rank = i;
         }
         const data_size_t high = sorted_idx[high_rank];
-        const int high_label = static_cast<int>(label[high]);
-        const double high_score = score[high];
-        const double high_label_gain = label_gain_[high_label];
-        const double high_discount = DCGCalculator::GetDiscount(high_rank);
         const data_size_t low = sorted_idx[low_rank];
-        const int low_label = static_cast<int>(label[low]);
-        const double low_score = score[low];
-        const double low_label_gain = label_gain_[low_label];
-        const double low_discount = DCGCalculator::GetDiscount(low_rank);
 
+        const double high_score = score[high];
+        const double low_score = score[low];
         const double delta_score = high_score - low_score;
 
-        // get dcg gap
-        const double dcg_gap = high_label_gain - low_label_gain;
-        // get discount of this pair
-        const double paired_discount = fabs(high_discount - low_discount);
-        // get delta NDCG
-        double delta_pair_NDCG = dcg_gap * paired_discount * inverse_max_dcg;
-        // regular the delta_pair_NDCG by score distance
-        if (norm_ && best_score != worst_score) {
-          delta_pair_NDCG /= (0.01f + fabs(delta_score));
+        double delta_pair;
+        if (lambdarank_target_ == LambdaRankTarget::NDCG) {
+          const int high_label = static_cast<int>(label[high]);
+          const int low_label = static_cast<int>(label[low]);
+          const double high_label_gain = label_gain_[high_label];
+          const double high_discount = DCGCalculator::GetDiscount(high_rank);
+          const double low_label_gain = label_gain_[low_label];
+          const double low_discount = DCGCalculator::GetDiscount(low_rank);
+          // get dcg gap
+          const double dcg_gap = high_label_gain - low_label_gain;
+          // get discount of this pair
+          const double paired_discount = fabs(high_discount - low_discount);
+          // get max DCG on current query & get delta NDCG
+          const double inverse_max_dcg = inverse_max_dcgs_[query_id];
+          delta_pair = dcg_gap * paired_discount * inverse_max_dcg;
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_NDCG) {
+          const int high_label = static_cast<int>(label[high]);
+          const int low_label = static_cast<int>(label[low]);
+          const double high_label_gain = label_gain_[high_label];
+          const double low_label_gain = label_gain_[low_label];
+          const int rank_diff = j - i;
+          const double left_discount = DCGCalculator::GetDiscount(rank_diff);
+          const double right_discount = DCGCalculator::GetDiscount(rank_diff + 1);
+          // get dcg gap
+          const double dcg_gap = high_label_gain - low_label_gain;
+          // get discount of this pair
+          const double paired_discount = left_discount - right_discount;
+          // get max DCG on current query & get delta NDCG
+          const double inverse_max_dcg = inverse_max_dcgs_[query_id];
+          delta_pair = dcg_gap * paired_discount * inverse_max_dcg;
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_NDCG_PLUS_PLUS) {
+          const int high_label = static_cast<int>(label[high]);
+          const int low_label = static_cast<int>(label[low]);
+          const double high_label_gain = label_gain_[high_label];
+          const double high_discount = DCGCalculator::GetDiscount(high_rank);
+          const double low_label_gain = label_gain_[low_label];
+          const double low_discount = DCGCalculator::GetDiscount(low_rank);
+          const int rank_diff = j - i;
+          const double left_discount = DCGCalculator::GetDiscount(rank_diff);
+          const double right_discount = DCGCalculator::GetDiscount(rank_diff + 1);
+          const double inverse_max_dcg = inverse_max_dcgs_[query_id];
+          // get dcg gap
+          const double dcg_gap = high_label_gain - low_label_gain;
+          // get discount of this pair
+          const double paired_discount_lambdarank = fabs(high_discount - low_discount);
+          const double paired_discount_lambdaloss = left_discount - right_discount;
+          // get max DCG on current query & get delta NDCG
+          delta_pair = dcg_gap * (paired_discount_lambdarank + lambdagap_weight_ * paired_discount_lambdaloss) * inverse_max_dcg;
+        } else if (lambdarank_target_ == LambdaRankTarget::BNDCG) {
+          const double high_discount = DCGCalculator::GetDiscount(high_rank);
+          const double low_discount = DCGCalculator::GetDiscount(low_rank);
+          const double paired_discount = fabs(high_discount - low_discount);
+          delta_pair = paired_discount * inverse_max_bdcgs_[query_id];
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_BNDCG) {
+          const int rank_diff = j - i;
+          const double left_discount = DCGCalculator::GetDiscount(rank_diff);
+          const double right_discount = DCGCalculator::GetDiscount(rank_diff + 1);
+          const double paired_discount = left_discount - right_discount;
+          delta_pair = paired_discount * inverse_max_bdcgs_[query_id];
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_BNDCG_PLUS_PLUS) {
+          const double high_discount = DCGCalculator::GetDiscount(high_rank);
+          const double low_discount = DCGCalculator::GetDiscount(low_rank);
+          const double paired_discount_lambdarank = fabs(high_discount - low_discount);
+          const int rank_diff = j - i;
+          const double left_discount = DCGCalculator::GetDiscount(rank_diff);
+          const double right_discount = DCGCalculator::GetDiscount(rank_diff + 1);
+          const double paired_lambdaloss_discount = left_discount - right_discount;
+          delta_pair = (paired_discount_lambdarank + lambdagap_weight_ * paired_lambdaloss_discount) * inverse_max_bdcgs_[query_id];
+        } else if (lambdarank_target_ == LambdaRankTarget::PRECISION ||
+                   lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S ||
+                   lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_X ||
+                   lambdarank_target_ == LambdaRankTarget::BIN_RANKNET ||
+                   lambdarank_target_ == LambdaRankTarget::RANKNET) {
+          delta_pair = 1;
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS) {
+          delta_pair = (j - i == truncation_level_) * lambdagap_weight_ + (i < truncation_level_);
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_X_PLUS) {
+          delta_pair = (j - i >= truncation_level_) * lambdagap_weight_ + (i < truncation_level_);
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS_PLUS) {
+          delta_pair = (j - i == truncation_level_) * lambdagap_weight_ + (j + 1 - truncation_level_) - (i >= truncation_level_) * (i + 1 - truncation_level_);
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS) {
+          delta_pair = (j - i >= truncation_level_) * lambdagap_weight_ + (j + 1 - truncation_level_) - (i >= truncation_level_) * (i + 1 - truncation_level_);
+        } else if (lambdarank_target_ == LambdaRankTarget::ARP_K) {
+          delta_pair = (j + 1 - truncation_level_) - (i >= truncation_level_) * (i + 1 - truncation_level_);
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_ARP1) {
+          delta_pair = static_cast<double>(label[high]);
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_ARP2) {
+          const double high_label = static_cast<double>(label[high]);
+          const double low_label = static_cast<double>(label[low]);
+          delta_pair = high_label - low_label;
+        } else {
+          Log::Fatal("LambdaRank target %d not implemented", lambdarank_target_);
         }
+
+        if (delta_pair == 0) {
+          continue;
+        }
+
+        // regular the delta_pair by score distance
+        if (norm_ && best_score != worst_score) {
+          delta_pair /= (0.01f + fabs(delta_score));
+        }
+
         // calculate lambda for this pair
         double p_lambda = GetSigmoid(delta_score);
         double p_hessian = p_lambda * (1.0f - p_lambda);
         // update
-        p_lambda *= -sigmoid_ * delta_pair_NDCG;
-        p_hessian *= sigmoid_ * sigmoid_ * delta_pair_NDCG;
+        p_lambda *= -sigmoid_ * delta_pair;
+        p_hessian *= sigmoid_ * sigmoid_ * delta_pair;
         lambdas[low] -= static_cast<score_t>(p_lambda);
         hessians[low] += static_cast<score_t>(p_hessian);
         lambdas[high] += static_cast<score_t>(p_lambda);
         hessians[high] += static_cast<score_t>(p_hessian);
         // lambda is negative, so use minus to accumulate
         sum_lambdas -= 2 * p_lambda;
+        // update counter
+        count_lambdas++;
       }
     }
     if (norm_ && sum_lambdas > 0) {
@@ -269,6 +516,7 @@ class LambdarankNDCG : public RankingObjective {
         hessians[i] = static_cast<score_t>(hessians[i] * norm_factor);
       }
     }
+    effective_pairs_[query_id] = 2.0 * static_cast<double>(count_lambdas) / (cnt * (cnt - 1));
   }
 
   inline double GetSigmoid(double score) const {
@@ -338,6 +586,12 @@ class LambdarankNDCG : public RankingObjective {
     LogDebugPositionBiasFactors();
   }
 
+  void GetGradients(const double* score, score_t* gradients, score_t* hessians) const override {
+    RankingObjective::GetGradients(score, gradients, hessians);
+    iter_++;
+    Log::Debug("Iteration %d completed", iter_);
+  }
+
   const char* GetName() const override { return "lambdarank"; }
 
  protected:
@@ -363,10 +617,14 @@ class LambdarankNDCG : public RankingObjective {
   int truncation_level_;
   /*! \brief Cache inverse max DCG, speed up calculation */
   std::vector<double> inverse_max_dcgs_;
+  /*! \brief Cache inverse max BDCG, speed up calculation */
+  std::vector<double> inverse_max_bdcgs_;
   /*! \brief Cache result for sigmoid transform to speed up */
   std::vector<double> sigmoid_table_;
   /*! \brief Gains for labels */
   std::vector<double> label_gain_;
+  /*! \brief Target metric of lambdarank */
+  LambdaRankTarget lambdarank_target_;
   /*! \brief Number of bins in simoid table */
   size_t _sigmoid_bins = 1024 * 1024;
   /*! \brief Minimal input of sigmoid table */
@@ -375,6 +633,10 @@ class LambdarankNDCG : public RankingObjective {
   double max_sigmoid_input_ = 50;
   /*! \brief Factor that covert score to bin in Sigmoid table */
   double sigmoid_table_idx_factor_;
+  /*! \brief Current iteration */
+  mutable int iter_ = 0;
+  /*! \brief LambdaGap weight */
+  double lambdagap_weight_;
 };
 
 /*!

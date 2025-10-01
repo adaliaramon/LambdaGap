@@ -10,6 +10,7 @@
 #include "rank_metric.hpp"
 #include "regression_metric.hpp"
 #include "xentropy_metric.hpp"
+#include "precision_metric.hpp"
 
 #include "cuda/cuda_binary_metric.hpp"
 #include "cuda/cuda_regression_metric.hpp"
@@ -53,6 +54,9 @@ Metric* Metric::CreateMetric(const std::string& type, const Config& config) {
     } else if (type == std::string("map")) {
       Log::Warning("Metric map is not implemented in cuda version. Fall back to evaluation on CPU.");
       return new MapMetric(config);
+    } else if (type == std:string("precision")) {
+      Log::Warning("Metric precision is not implemented in cuda version. Fall back to evaluation on CPU.");
+      return new PrecisionMetric(config);
     } else if (type == std::string("multi_logloss")) {
       Log::Warning("Metric multi_logloss is not implemented in cuda version. Fall back to evaluation on CPU.");
       return new MultiSoftmaxLoglossMetric(config);
@@ -107,6 +111,8 @@ Metric* Metric::CreateMetric(const std::string& type, const Config& config) {
       return new NDCGMetric(config);
     } else if (type == std::string("map")) {
       return new MapMetric(config);
+    } else if (type == std::string("precision")) {
+      return new PrecisionMetric(config);
     } else if (type == std::string("multi_logloss")) {
       return new MultiSoftmaxLoglossMetric(config);
     } else if (type == std::string("multi_error")) {

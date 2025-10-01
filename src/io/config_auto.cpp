@@ -305,6 +305,8 @@ const std::unordered_set<std::string>& Config::parameter_set() {
   "tweedie_variance_power",
   "lambdarank_truncation_level",
   "lambdarank_norm",
+  "lambdarank_target",
+  "lambdagap_weight",
   "label_gain",
   "lambdarank_position_bias_regularization",
   "metric",
@@ -623,6 +625,10 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
 
   GetBool(params, "lambdarank_norm", &lambdarank_norm);
 
+  GetString(params, "lambdarank_target", &lambdarank_target);
+
+  GetDouble(params, "lambdagap_weight", &lambdagap_weight);
+
   if (GetString(params, "label_gain", &tmp_str)) {
     label_gain = Common::StringToArray<double>(tmp_str, ',');
   }
@@ -772,6 +778,8 @@ std::string Config::SaveMembersToString() const {
   str_buf << "[tweedie_variance_power: " << tweedie_variance_power << "]\n";
   str_buf << "[lambdarank_truncation_level: " << lambdarank_truncation_level << "]\n";
   str_buf << "[lambdarank_norm: " << lambdarank_norm << "]\n";
+  str_buf << "[lambdarank_target: " << lambdarank_target << "]\n";
+  str_buf << "[lambdagap_weight: " << lambdagap_weight << "]\n";
   str_buf << "[label_gain: " << Common::Join(label_gain, ",") << "]\n";
   str_buf << "[lambdarank_position_bias_regularization: " << lambdarank_position_bias_regularization << "]\n";
   str_buf << "[eval_at: " << Common::Join(eval_at, ",") << "]\n";
@@ -914,6 +922,8 @@ const std::unordered_map<std::string, std::vector<std::string>>& Config::paramet
     {"tweedie_variance_power", {}},
     {"lambdarank_truncation_level", {}},
     {"lambdarank_norm", {}},
+    {"lambdarank_target", {}},
+    {"lambdarank_sample_probability", {}},
     {"label_gain", {}},
     {"lambdarank_position_bias_regularization", {}},
     {"metric", {"metrics", "metric_types"}},
@@ -1059,6 +1069,8 @@ const std::unordered_map<std::string, std::string>& Config::ParameterTypes() {
     {"tweedie_variance_power", "double"},
     {"lambdarank_truncation_level", "int"},
     {"lambdarank_norm", "bool"},
+    {"lambdarank_target", "string"},
+    {"lambdarank_sample_probability", "double"},
     {"label_gain", "vector<double>"},
     {"lambdarank_position_bias_regularization", "double"},
     {"metric", "vector<string>"},

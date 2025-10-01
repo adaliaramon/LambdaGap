@@ -97,6 +97,16 @@ class DCGCalculator {
   static double CalMaxDCGAtK(data_size_t k,
     const label_t* label, data_size_t num_data);
 
+  /*!
+  * \brief Calculate the Max BDCG score at position k
+  * \param k The position want to eval at
+  * \param label Pointer of label
+  * \param num_data Number of data
+  * \return The max DCG score
+  */
+  static double CalMaxBDCGAtK(data_size_t k,
+    const label_t* label, data_size_t num_data);
+
 
   /*!
   * \brief Check the metadata for NDCG and LambdaRank

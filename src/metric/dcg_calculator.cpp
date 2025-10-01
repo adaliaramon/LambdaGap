@@ -79,6 +79,22 @@ double DCGCalculator::CalMaxDCGAtK(data_size_t k, const label_t* label, data_siz
   return ret;
 }
 
+double DCGCalculator::CalMaxBDCGAtK(data_size_t k, const label_t* label, data_size_t num_data) {
+  double ret = 0.0f;
+  int relevant_count = 0;
+  for (data_size_t i = 0; i < num_data; ++i) {
+    if (label[i] > 0) {
+      ++relevant_count;
+    }
+  }
+  if (k > num_data) { k = num_data; }
+  if (k > relevant_count) { k = relevant_count; }
+  for (data_size_t j = 0; j < k; ++j) {
+    ret += discount_[j];
+  }
+  return ret;
+}
+
 void DCGCalculator::CalMaxDCG(const std::vector<data_size_t>& ks,
                               const label_t* label,
                               data_size_t num_data,

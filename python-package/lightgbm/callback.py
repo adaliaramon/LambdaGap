@@ -413,6 +413,7 @@ class _EarlyStoppingCallback:
         first_time_updating_best_score_list = self.best_score_list == []
         for i in range(len(env.evaluation_result_list)):
             dataset_name, metric_name, metric_value, *_ = env.evaluation_result_list[i]
+            metric_value = -metric_value  # Dirty patch to make early stopping work correctly
             if first_time_updating_best_score_list or self.cmp_op[i](metric_value, self.best_score[i]):
                 self.best_score[i] = metric_value
                 self.best_iter[i] = env.iteration

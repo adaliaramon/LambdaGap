@@ -989,6 +989,7 @@ struct Config {
   // desc = used only in ``lambdarank`` application
   // desc = controls which metric to use for lambdarank gradient calculation
   // descl2 = ``ranknet``, RankNet skipping equally-labeled documents__
+  // descl2 = ``bin-ranknet``, Binarized RankNet__
   // descl2 = ``ndcg``, `NDCG <https://en.wikipedia.org/wiki/Discounted_cumulative_gain#Normalized_DCG>`__
   // descl2 = ``bndcg``, `Binarized NDCG`__
   // descl2 = ``lambdaloss-ndcg``, `NDCG with LambdaLoss approach (NDCG-Loss2) <https://dl.acm.org/doi/10.1145/3269206.3271784>`__

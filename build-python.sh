@@ -190,6 +190,9 @@ if [ -n "${CUDAARCHS:-}" ]; then
     BUILD_ARGS="${BUILD_ARGS} --config-setting=cmake.define.CMAKE_CUDA_ARCHITECTURES=${CUDAARCHS}"
 fi
 
+if ! python -m build --version >/dev/null 2>&1; then
+    pip install --prefer-binary 'build>=0.10.0' || uv pip install 'build>=0.10.0' || true
+fi
 if ! python -m build --version >/dev/null; then
     echo "'build' is required to build 'lightgbm'. Install it with 'pip install build' or similar."
     exit 1

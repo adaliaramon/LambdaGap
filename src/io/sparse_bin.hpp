@@ -14,7 +14,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
+#include <queue>
 #include <utility>
 #include <vector>
 
@@ -92,8 +94,33 @@ class SparseBin : public Bin {
 
   void Push(int tid, data_size_t idx, uint32_t value) override {
     auto cur_bin = static_cast<VAL_T>(value);
-    if (cur_bin != 0) {
-      push_buffers_[tid].emplace_back(idx, cur_bin);
+    if (cur_bin == 0) {
+      return;
+    }
+    PushBuffer& buffer = push_buffers_[tid];
+    if (buffer.in_order && idx >= buffer.last_idx) {
+      // varint of the row delta, then the bin
+      uint32_t delta = static_cast<uint32_t>(idx - buffer.last_idx);
+      while (delta >= 0x80) {
+        buffer.bytes.push_back(static_cast<uint8_t>(delta | 0x80));
+        delta >>= 7;
+      }
+      buffer.bytes.push_back(static_cast<uint8_t>(delta));
+      const uint8_t* bin_bytes = reinterpret_cast<const uint8_t*>(&cur_bin);
+      buffer.bytes.insert(buffer.bytes.end(), bin_bytes, bin_bytes + sizeof(VAL_T));
+      buffer.last_idx = idx;
+    } else {
+      if (buffer.in_order) {
+        // An earlier row: this thread keeps (row, bin) pairs from now on
+        PushReader reader(buffer.bytes);
+        while (reader.Next()) {
+          buffer.pairs.emplace_back(reader.idx, reader.bin);
+        }
+        buffer.bytes.clear();
+        buffer.bytes.shrink_to_fit();
+        buffer.in_order = false;
+      }
+      buffer.pairs.emplace_back(idx, cur_bin);
     }
   }
 
@@ -597,29 +624,98 @@ class SparseBin : public Bin {
   void* get_data() override { return nullptr; }
 
   void FinishLoad() override {
-    // get total non zero size
-    size_t pair_cnt = 0;
-    for (size_t i = 0; i < push_buffers_.size(); ++i) {
-      pair_cnt += push_buffers_[i].size();
+    bool all_in_order = true;
+    for (const PushBuffer& buffer : push_buffers_) {
+      all_in_order = all_in_order && buffer.in_order;
     }
-    std::vector<std::pair<data_size_t, VAL_T>>& idx_val_pairs =
-        push_buffers_[0];
-    idx_val_pairs.reserve(pair_cnt);
+    if (!all_in_order) {
+      // Some thread pushed rows out of order: sort all the pairs
+      std::vector<std::pair<data_size_t, VAL_T>> idx_val_pairs;
+      for (PushBuffer& buffer : push_buffers_) {
+        if (buffer.in_order) {
+          PushReader reader(buffer.bytes);
+          while (reader.Next()) {
+            idx_val_pairs.emplace_back(reader.idx, reader.bin);
+          }
+        } else {
+          idx_val_pairs.insert(idx_val_pairs.end(), buffer.pairs.begin(),
+                               buffer.pairs.end());
+        }
+        buffer = PushBuffer();
+      }
+      // sort by data index
+      std::sort(idx_val_pairs.begin(), idx_val_pairs.end(),
+                [](const std::pair<data_size_t, VAL_T>& a,
+                   const std::pair<data_size_t, VAL_T>& b) {
+                  return a.first < b.first;
+                });
+      // load delta array
+      LoadFromPair(idx_val_pairs);
+      return;
+    }
+    // The rows of every thread are in order: merging the threads' streams gives the
+    // pairs in the order sorting them would, without holding them all as pairs
+    // (8 bytes each, the bulk of the memory of a dataset while it is built)
+    std::vector<PushReader> readers;
+    size_t num_pairs = 0;
+    for (const PushBuffer& buffer : push_buffers_) {
+      PushReader counter(buffer.bytes);
+      while (counter.Next()) {
+        ++num_pairs;
+      }
+      readers.emplace_back(buffer.bytes);
+    }
+    using HeapItem = std::pair<data_size_t, size_t>;  // (row, reader)
+    std::priority_queue<HeapItem, std::vector<HeapItem>, std::greater<HeapItem>> heap;
+    for (size_t r = 0; r < readers.size(); ++r) {
+      if (readers[r].Next()) {
+        heap.emplace(readers[r].idx, r);
+      }
+    }
+    deltas_.clear();
+    vals_.clear();
+    deltas_.reserve(num_pairs);
+    vals_.reserve(num_pairs);
+    // as LoadFromPair does
+    data_size_t last_idx = 0;
+    bool first = true;
+    while (!heap.empty()) {
+      const size_t r = heap.top().second;
+      heap.pop();
+      const data_size_t cur_idx = readers[r].idx;
+      const VAL_T bin = readers[r].bin;
+      if (readers[r].Next()) {
+        heap.emplace(readers[r].idx, r);
+      }
+      data_size_t cur_delta = cur_idx - last_idx;
+      // disallow the multi-val in one row
+      if (!first && cur_delta == 0) {
+        continue;
+      }
+      first = false;
+      while (cur_delta >= 256) {
+        deltas_.push_back(255);
+        vals_.push_back(0);
+        cur_delta -= 255;
+      }
+      deltas_.push_back(static_cast<uint8_t>(cur_delta));
+      vals_.push_back(bin);
+      last_idx = cur_idx;
+    }
+    readers.clear();
+    for (PushBuffer& buffer : push_buffers_) {
+      buffer = PushBuffer();
+    }
+    // avoid out of range
+    deltas_.push_back(0);
+    num_vals_ = static_cast<data_size_t>(vals_.size());
 
-    for (size_t i = 1; i < push_buffers_.size(); ++i) {
-      idx_val_pairs.insert(idx_val_pairs.end(), push_buffers_[i].begin(),
-                           push_buffers_[i].end());
-      push_buffers_[i].clear();
-      push_buffers_[i].shrink_to_fit();
-    }
-    // sort by data index
-    std::sort(idx_val_pairs.begin(), idx_val_pairs.end(),
-              [](const std::pair<data_size_t, VAL_T>& a,
-                 const std::pair<data_size_t, VAL_T>& b) {
-                return a.first < b.first;
-              });
-    // load delta array
-    LoadFromPair(idx_val_pairs);
+    // reduce memory cost
+    deltas_.shrink_to_fit();
+    vals_.shrink_to_fit();
+
+    // generate fast index
+    GetFastIndex();
   }
 
   void LoadFromPair(
@@ -815,7 +911,42 @@ class SparseBin : public Bin {
       deltas_;
   std::vector<VAL_T, Common::AlignmentAllocator<VAL_T, kAlignedSize>> vals_;
   data_size_t num_vals_;
-  std::vector<std::vector<std::pair<data_size_t, VAL_T>>> push_buffers_;
+  /*! \brief The (row, bin) values pushed by one thread. While its rows only grow, they
+   *         are a byte stream of varint row deltas and bins, 2 to 3 bytes per value
+   *         where pairs take 8; after an earlier row, (row, bin) pairs. */
+  struct PushBuffer {
+    std::vector<uint8_t> bytes;
+    std::vector<std::pair<data_size_t, VAL_T>> pairs;
+    data_size_t last_idx = 0;
+    bool in_order = true;
+  };
+  /*! \brief Reads the (row, bin) values of a PushBuffer byte stream in order */
+  struct PushReader {
+    explicit PushReader(const std::vector<uint8_t>& bytes)
+        : pos(bytes.data()), end(bytes.data() + bytes.size()) {}
+    bool Next() {
+      if (pos == end) {
+        return false;
+      }
+      uint32_t delta = 0;
+      int shift = 0;
+      uint8_t byte;
+      do {
+        byte = *pos++;
+        delta |= static_cast<uint32_t>(byte & 0x7F) << shift;
+        shift += 7;
+      } while (byte & 0x80);
+      idx += static_cast<data_size_t>(delta);
+      std::memcpy(&bin, pos, sizeof(VAL_T));
+      pos += sizeof(VAL_T);
+      return true;
+    }
+    const uint8_t* pos;
+    const uint8_t* end;
+    data_size_t idx = 0;
+    VAL_T bin = 0;
+  };
+  std::vector<PushBuffer> push_buffers_;
   std::vector<std::pair<data_size_t, data_size_t>> fast_index_;
   data_size_t fast_index_shift_;
 };

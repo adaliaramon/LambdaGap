@@ -78,45 +78,27 @@ class PrecisionMetric:public Metric {
           ++num_hit;
         }
       }
-      (*out)[i] = static_cast<double>(num_hit) / std::min(cur_k, num_data - cur_left);
+      (*out)[i] = static_cast<double>(num_hit) / cur_k;
       cur_left = cur_k;
     }
   }
   std::vector<double> Eval(const double* score, const ObjectiveFunction*) const override {
-    // some buffers for multi-threading sum up
-    int num_threads = OMP_NUM_THREADS();
-    std::vector<std::vector<double>> result_buffer_;
-    for (int i = 0; i < num_threads; ++i) {
-      result_buffer_.emplace_back(eval_at_.size(), 0.0f);
+    std::vector<std::vector<double>> per_query(num_queries_, std::vector<double>(eval_at_.size(), 0.0f));
+    #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(guided)
+    for (data_size_t i = 0; i < num_queries_; ++i) {
+      CalPrecisionAtK(eval_at_, label_ + query_boundaries_[i],
+                score + query_boundaries_[i], query_boundaries_[i + 1] - query_boundaries_[i], &per_query[i]);
     }
-    std::vector<double> tmp_precision(eval_at_.size(), 0.0f);
-    if (query_weights_ == nullptr) {
-      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(guided) firstprivate(tmp_precision)
-      for (data_size_t i = 0; i < num_queries_; ++i) {
-        const int tid = omp_get_thread_num();
-        CalPrecisionAtK(eval_at_, label_ + query_boundaries_[i],
-                  score + query_boundaries_[i], query_boundaries_[i + 1] - query_boundaries_[i], &tmp_precision);
-        for (size_t j = 0; j < eval_at_.size(); ++j) {
-          result_buffer_[tid][j] += tmp_precision[j];
-        }
-      }
-    } else {
-      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(guided) firstprivate(tmp_precision)
-      for (data_size_t i = 0; i < num_queries_; ++i) {
-        const int tid = omp_get_thread_num();
-        CalPrecisionAtK(eval_at_, label_ + query_boundaries_[i],
-                  score + query_boundaries_[i], query_boundaries_[i + 1] - query_boundaries_[i], &tmp_precision);
-        for (size_t j = 0; j < eval_at_.size(); ++j) {
-          result_buffer_[tid][j] += tmp_precision[j] * query_weights_[i];
-        }
-      }
-    }
-    // Get final average PRECISION
+    // Sum in query order: summing per thread made the result depend on the scheduling,
+    // which broke the ties between iterations differently from run to run
     std::vector<double> result(eval_at_.size(), 0.0f);
-    for (size_t j = 0; j < result.size(); ++j) {
-      for (int i = 0; i < num_threads; ++i) {
-        result[j] += result_buffer_[i][j];
+    for (data_size_t i = 0; i < num_queries_; ++i) {
+      const double weight = query_weights_ == nullptr ? 1.0f : query_weights_[i];
+      for (size_t j = 0; j < result.size(); ++j) {
+        result[j] += per_query[i][j] * weight;
       }
+    }
+    for (size_t j = 0; j < result.size(); ++j) {
       result[j] /= sum_query_weights_;
     }
     return result;

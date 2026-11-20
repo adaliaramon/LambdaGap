@@ -267,8 +267,10 @@ class LambdarankNDCG : public RankingObjective {
     }
     double best_score, worst_score;
     if (lambdarank_target_ == LambdaRankTarget::PRECISION) {
+      // Clamped: a query may have fewer documents than the truncation level
       std::nth_element(
-          sorted_idx.begin(), sorted_idx.begin() + truncation_level_ - 1, sorted_idx.end(),
+          sorted_idx.begin(), sorted_idx.begin() + std::min(truncation_level_, cnt) - 1,
+          sorted_idx.end(),
           [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
       const auto minmax = std::minmax_element(score, score + cnt);
       const auto worst = minmax.first;
@@ -330,9 +332,24 @@ class LambdarankNDCG : public RankingObjective {
           start = truncation_level_;
           end = cnt;
           break;
-        case LambdaRankTarget::ARP_K:
         case LambdaRankTarget::LAMBDAGAP_S_PLUS:
+          // Beyond the truncation level, only the pair at distance truncation_level_
+          // has a non-zero weight
+          if (i >= truncation_level_) {
+            start = i + truncation_level_;
+            end = std::min(start + 1, cnt);
+          } else {
+            start = truncation_level_;
+            end = cnt;
+          }
+          break;
         case LambdaRankTarget::LAMBDAGAP_X_PLUS:
+          // Beyond the truncation level, only pairs at distance truncation_level_ or
+          // more have a non-zero weight
+          start = i >= truncation_level_ ? i + truncation_level_ : truncation_level_;
+          end = cnt;
+          break;
+        case LambdaRankTarget::ARP_K:
         case LambdaRankTarget::LAMBDAGAP_S_PLUS_PLUS:
         case LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS:
           start = std::max(i + 1, truncation_level_);

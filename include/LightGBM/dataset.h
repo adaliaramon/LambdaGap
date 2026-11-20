@@ -122,6 +122,24 @@ class Metadata {
   void SetPosition(const data_size_t* position, data_size_t len);
 
   /*!
+  * \brief Set the group of each row for the precision_nms metric: within a query, only
+  *        the best scored row of each group counts
+  */
+  void SetNmsGroup(const int32_t* nms_group, data_size_t len);
+
+  /*!
+  * \brief Set the coordinate of each row for the precision_nms metric: rows closer than
+  *        nms_tolerance to a better row kept are suppressed
+  */
+  void SetNmsCoordinate(const double* nms_coordinate, data_size_t len);
+
+  /*!
+  * \brief Set the tie-break of each row for the precision_nms metric: between equal
+  *        scores, the higher tie-break goes first (then the row order)
+  */
+  void SetNmsTiebreak(const double* nms_tiebreak, data_size_t len);
+
+  /*!
   * \brief Set initial scores
   * \param init_score Initial scores, this class will manage memory for init_score.
   */
@@ -231,6 +249,27 @@ class Metadata {
     } else {
       return nullptr;
     }
+  }
+
+  /*!
+  * \brief Get the groups of the precision_nms metric, if they do not exist then return nullptr
+  */
+  inline const int32_t* nms_groups() const {
+    return nms_groups_.empty() ? nullptr : nms_groups_.data();
+  }
+
+  /*!
+  * \brief Get the coordinates of the precision_nms metric, if they do not exist then return nullptr
+  */
+  inline const double* nms_coordinates() const {
+    return nms_coordinates_.empty() ? nullptr : nms_coordinates_.data();
+  }
+
+  /*!
+  * \brief Get the tie-breaks of the precision_nms metric, if they do not exist then return nullptr
+  */
+  inline const double* nms_tiebreaks() const {
+    return nms_tiebreaks_.empty() ? nullptr : nms_tiebreaks_.data();
   }
 
   /*!
@@ -373,6 +412,12 @@ class Metadata {
   std::vector<data_size_t> positions_;
   /*! \brief Position identifiers */
   std::vector<std::string> position_ids_;
+  /*! \brief Groups of the precision_nms metric */
+  std::vector<int32_t> nms_groups_;
+  /*! \brief Coordinates of the precision_nms metric */
+  std::vector<double> nms_coordinates_;
+  /*! \brief Tie-breaks of the precision_nms metric */
+  std::vector<double> nms_tiebreaks_;
   /*! \brief Query boundaries */
   std::vector<data_size_t> query_boundaries_;
   /*! \brief Query weights */

@@ -942,6 +942,10 @@ bool Dataset::SetDoubleField(const char* field_name, const double* field_data,
   name = Common::Trim(name);
   if (name == std::string("init_score")) {
     metadata_.SetInitScore(field_data, num_element);
+  } else if (name == std::string("nms_coordinate")) {
+    metadata_.SetNmsCoordinate(field_data, num_element);
+  } else if (name == std::string("nms_tiebreak")) {
+    metadata_.SetNmsTiebreak(field_data, num_element);
   } else {
     return false;
   }
@@ -956,6 +960,8 @@ bool Dataset::SetIntField(const char* field_name, const int* field_data,
     metadata_.SetQuery(field_data, num_element);
   } else if (name == std::string("position")) {
     metadata_.SetPosition(field_data, num_element);
+  } else if (name == std::string("nms_group")) {
+    metadata_.SetNmsGroup(field_data, num_element);
   } else {
     return false;
   }
@@ -993,6 +999,12 @@ bool Dataset::GetDoubleField(const char* field_name, data_size_t* out_len,
   if (name == std::string("init_score")) {
     *out_ptr = metadata_.init_score();
     *out_len = static_cast<data_size_t>(metadata_.num_init_score());
+  } else if (name == std::string("nms_coordinate")) {
+    *out_ptr = metadata_.nms_coordinates();
+    *out_len = metadata_.nms_coordinates() == nullptr ? 0 : num_data_;
+  } else if (name == std::string("nms_tiebreak")) {
+    *out_ptr = metadata_.nms_tiebreaks();
+    *out_len = metadata_.nms_tiebreaks() == nullptr ? 0 : num_data_;
   } else {
     return false;
   }
@@ -1009,6 +1021,9 @@ bool Dataset::GetIntField(const char* field_name, data_size_t* out_len,
   } else if (name == std::string("position")) {
     *out_ptr = metadata_.positions();
     *out_len = num_data_;
+  } else if (name == std::string("nms_group")) {
+    *out_ptr = metadata_.nms_groups();
+    *out_len = metadata_.nms_groups() == nullptr ? 0 : num_data_;
   } else {
     return false;
   }

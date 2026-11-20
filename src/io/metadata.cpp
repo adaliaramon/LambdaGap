@@ -119,6 +119,25 @@ void Metadata::Init(const Metadata& fullset, const data_size_t* used_indices, da
     num_weights_ = 0;
   }
 
+  if (!fullset.nms_groups_.empty()) {
+    nms_groups_ = std::vector<int32_t>(num_used_indices);
+    for (data_size_t i = 0; i < num_used_indices; ++i) {
+      nms_groups_[i] = fullset.nms_groups_[used_indices[i]];
+    }
+  }
+  if (!fullset.nms_coordinates_.empty()) {
+    nms_coordinates_ = std::vector<double>(num_used_indices);
+    for (data_size_t i = 0; i < num_used_indices; ++i) {
+      nms_coordinates_[i] = fullset.nms_coordinates_[used_indices[i]];
+    }
+  }
+  if (!fullset.nms_tiebreaks_.empty()) {
+    nms_tiebreaks_ = std::vector<double>(num_used_indices);
+    for (data_size_t i = 0; i < num_used_indices; ++i) {
+      nms_tiebreaks_[i] = fullset.nms_tiebreaks_[used_indices[i]];
+    }
+  }
+
   if (!fullset.init_score_.empty()) {
     int num_class = static_cast<int>(fullset.num_init_score_ / fullset.num_data_);
     init_score_ = std::vector<double>(static_cast<size_t>(num_used_indices) * num_class);
@@ -573,6 +592,42 @@ void Metadata::SetQuery(const data_size_t* query, data_size_t len) {
 
 void Metadata::SetQuery(const ArrowChunkedArray& array) {
   SetQueriesFromIterator(array.begin<data_size_t>(), array.end<data_size_t>());
+}
+
+void Metadata::SetNmsGroup(const int32_t* nms_group, data_size_t len) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (nms_group == nullptr || len == 0) {
+    nms_groups_.clear();
+    return;
+  }
+  if (num_data_ != len) {
+    Log::Fatal("Length of nms_group (%i) doesn't match data size (%i)", len, num_data_);
+  }
+  nms_groups_.assign(nms_group, nms_group + len);
+}
+
+void Metadata::SetNmsCoordinate(const double* nms_coordinate, data_size_t len) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (nms_coordinate == nullptr || len == 0) {
+    nms_coordinates_.clear();
+    return;
+  }
+  if (num_data_ != len) {
+    Log::Fatal("Length of nms_coordinate (%i) doesn't match data size (%i)", len, num_data_);
+  }
+  nms_coordinates_.assign(nms_coordinate, nms_coordinate + len);
+}
+
+void Metadata::SetNmsTiebreak(const double* nms_tiebreak, data_size_t len) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (nms_tiebreak == nullptr || len == 0) {
+    nms_tiebreaks_.clear();
+    return;
+  }
+  if (num_data_ != len) {
+    Log::Fatal("Length of nms_tiebreak (%i) doesn't match data size (%i)", len, num_data_);
+  }
+  nms_tiebreaks_.assign(nms_tiebreak, nms_tiebreak + len);
 }
 
 void Metadata::SetPosition(const data_size_t* positions, data_size_t len) {

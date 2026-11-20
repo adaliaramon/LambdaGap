@@ -57,6 +57,9 @@ Metric* Metric::CreateMetric(const std::string& type, const Config& config) {
     } else if (type == std::string("precision")) {
       Log::Warning("Metric precision is not implemented in cuda version. Fall back to evaluation on CPU.");
       return new PrecisionMetric(config);
+    } else if (type == std::string("precision_nms")) {
+      Log::Warning("Metric precision_nms is not implemented in cuda version. Fall back to evaluation on CPU.");
+      return new PrecisionNMSMetric(config);
     } else if (type == std::string("multi_logloss")) {
       Log::Warning("Metric multi_logloss is not implemented in cuda version. Fall back to evaluation on CPU.");
       return new MultiSoftmaxLoglossMetric(config);
@@ -113,6 +116,8 @@ Metric* Metric::CreateMetric(const std::string& type, const Config& config) {
       return new MapMetric(config);
     } else if (type == std::string("precision")) {
       return new PrecisionMetric(config);
+    } else if (type == std::string("precision_nms")) {
+      return new PrecisionNMSMetric(config);
     } else if (type == std::string("multi_logloss")) {
       return new MultiSoftmaxLoglossMetric(config);
     } else if (type == std::string("multi_error")) {

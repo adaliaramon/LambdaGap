@@ -320,6 +320,8 @@ const std::unordered_set<std::string>& Config::parameter_set() {
   "metric_freq",
   "is_provide_training_metric",
   "eval_at",
+  "nms_tolerance",
+  "nms_tolerance_mode",
   "multi_error_top_k",
   "auc_mu_weights",
   "num_machines",
@@ -653,6 +655,11 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
     eval_at = Common::StringToArray<int>(tmp_str, ',');
   }
 
+  GetDouble(params, "nms_tolerance", &nms_tolerance);
+  CHECK_GE(nms_tolerance, 0.0);
+
+  GetString(params, "nms_tolerance_mode", &nms_tolerance_mode);
+
   GetInt(params, "multi_error_top_k", &multi_error_top_k);
   CHECK_GT(multi_error_top_k, 0);
 
@@ -793,6 +800,8 @@ std::string Config::SaveMembersToString() const {
   str_buf << "[label_gain: " << Common::Join(label_gain, ",") << "]\n";
   str_buf << "[lambdarank_position_bias_regularization: " << lambdarank_position_bias_regularization << "]\n";
   str_buf << "[eval_at: " << Common::Join(eval_at, ",") << "]\n";
+  str_buf << "[nms_tolerance: " << nms_tolerance << "]\n";
+  str_buf << "[nms_tolerance_mode: " << nms_tolerance_mode << "]\n";
   str_buf << "[multi_error_top_k: " << multi_error_top_k << "]\n";
   str_buf << "[auc_mu_weights: " << Common::Join(auc_mu_weights, ",") << "]\n";
   str_buf << "[num_machines: " << num_machines << "]\n";
@@ -941,6 +950,8 @@ const std::unordered_map<std::string, std::vector<std::string>>& Config::paramet
     {"metric_freq", {"output_freq"}},
     {"is_provide_training_metric", {"training_metric", "is_training_metric", "train_metric"}},
     {"eval_at", {"ndcg_eval_at", "ndcg_at", "map_eval_at", "map_at"}},
+    {"nms_tolerance", {}},
+    {"nms_tolerance_mode", {}},
     {"multi_error_top_k", {}},
     {"auc_mu_weights", {}},
     {"num_machines", {"num_machine"}},
@@ -1089,6 +1100,8 @@ const std::unordered_map<std::string, std::string>& Config::ParameterTypes() {
     {"metric_freq", "int"},
     {"is_provide_training_metric", "bool"},
     {"eval_at", "vector<int>"},
+    {"nms_tolerance", "double"},
+    {"nms_tolerance_mode", "string"},
     {"multi_error_top_k", "int"},
     {"auc_mu_weights", "vector<double>"},
     {"num_machines", "int"},

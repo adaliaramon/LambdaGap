@@ -643,6 +643,9 @@ _FIELD_TYPE_MAPPER = {
     "init_score": _C_API_DTYPE_FLOAT64,
     "group": _C_API_DTYPE_INT32,
     "position": _C_API_DTYPE_INT32,
+    "nms_group": _C_API_DTYPE_INT32,
+    "nms_coordinate": _C_API_DTYPE_FLOAT64,
+    "nms_tiebreak": _C_API_DTYPE_FLOAT64,
 }
 
 """String name to int feature importance type mapper"""
@@ -2887,8 +2890,10 @@ class Dataset:
                     "In multiclass classification init_score can also be a list of lists, numpy 2-D array or pandas DataFrame."
                 )
         else:
-            if field_name in {"group", "position"}:
+            if field_name in {"group", "position", "nms_group"}:
                 dtype = np.int32
+            elif field_name in {"nms_coordinate", "nms_tiebreak"}:
+                dtype = np.float64
             else:
                 dtype = np.float32
             data = _list_to_1d_numpy(data=data, dtype=dtype, name=field_name)
@@ -5542,5 +5547,5 @@ class Booster:
                     )
                 self.__name_inner_eval = [string_buffers[i].value.decode("utf-8") for i in range(self.__num_inner_eval)]
                 self.__higher_better_inner_eval = [
-                    name.startswith(("auc", "ndcg@", "map@", "precision@", "average_precision")) for name in self.__name_inner_eval
+                    name.startswith(("auc", "ndcg@", "map@", "precision@", "precision_nms@", "average_precision")) for name in self.__name_inner_eval
                 ]

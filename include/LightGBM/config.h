@@ -1055,6 +1055,7 @@ struct Config {
   // descl2 = ``tweedie``, negative log-likelihood for **Tweedie** regression
   // descl2 = ``ndcg``, `NDCG <https://en.wikipedia.org/wiki/Discounted_cumulative_gain#Normalized_DCG>`__, aliases: ``lambdarank``, ``rank_xendcg``, ``xendcg``, ``xe_ndcg``, ``xe_ndcg_mart``, ``xendcg_mart``
   // descl2 = ``map``, `MAP <https://makarandtapaswi.wordpress.com/2012/07/02/intuition-behind-average-precision-and-map/>`__, aliases: ``mean_average_precision``
+  // descl2 = ``precision_nms``, precision at k after non-maximum suppression, which needs the ``nms_group`` and ``nms_coordinate`` dataset fields, and breaks ties between equal scores by the optional ``nms_tiebreak`` field, then by row order (see ``nms_tolerance``)
   // descl2 = ``auc``, `AUC <https://en.wikipedia.org/wiki/Receiver_operating_characteristic#Area_under_the_curve>`__
   // descl2 = ``average_precision``, `average precision score <https://scikit-learn.org/stable/modules/generated/sklearn.metrics.average_precision_score.html>`__
   // descl2 = ``r2``, `R-squared <https://scikit-learn.org/stable/modules/generated/sklearn.metrics.r2_score.html>`__ (*New in version 4.7.0*)
@@ -1088,6 +1089,18 @@ struct Config {
   // desc = used only with ``ndcg`` and ``map`` metrics
   // desc = `NDCG <https://en.wikipedia.org/wiki/Discounted_cumulative_gain#Normalized_DCG>`__ and `MAP <https://makarandtapaswi.wordpress.com/2012/07/02/intuition-behind-average-precision-and-map/>`__ evaluation positions, separated by ``,``
   std::vector<int> eval_at;
+
+  // check = >=0.0
+  // desc = used only with ``precision_nms`` metric
+  // desc = rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed
+  double nms_tolerance = 0.0;
+
+  // type = enum
+  // options = absolute, relative
+  // desc = used only with ``precision_nms`` metric
+  // desc = ``absolute``, the distance between two coordinates is their difference
+  // desc = ``relative``, the distance is their difference divided by the larger of the two
+  std::string nms_tolerance_mode = "absolute";
 
   // check = >0
   // desc = used only with ``multi_error`` metric

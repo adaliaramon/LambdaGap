@@ -16,6 +16,11 @@
 
 namespace LightGBM {
 
+/*! \brief A score for sorting: NaN as the lowest, so the order stays strict and weak */
+inline double SortableScore(double score) {
+  return std::isnan(score) ? -std::numeric_limits<double>::infinity() : score;
+}
+
 class PrecisionMetric:public Metric {
  public:
   explicit PrecisionMetric(const Config& config) {
@@ -69,7 +74,9 @@ class PrecisionMetric:public Metric {
       sorted_idx.emplace_back(i);
     }
     std::stable_sort(sorted_idx.begin(), sorted_idx.end(),
-                     [score](data_size_t a, data_size_t b) {return score[a] > score[b]; });
+                     [score](data_size_t a, data_size_t b) {
+                       return SortableScore(score[a]) > SortableScore(score[b]);
+                     });
 
     int num_hit = 0;
     data_size_t cur_left = 0;
@@ -128,10 +135,11 @@ class PrecisionMetric:public Metric {
 /*!
 * \brief Precision at k after non-maximum suppression. Within a query, rows go by
 *        decreasing score, equal scores by decreasing nms_tiebreak when it is set, then
-*        by row order. Only the first row of each
-*        nms_group counts, and only if its nms_coordinate is farther than nms_tolerance
-*        from the coordinate of every row kept before. Precision at k is the share of
-*        relevant rows (label > 0) among the first k rows kept.
+*        by row order. Only the first row of each nms_group counts, and only if its
+*        nms_coordinate is farther than nms_tolerance from the coordinate of every row
+*        kept before: a group whose first row is suppressed is not kept at all, by none
+*        of its later rows. Precision at k is the share of relevant rows (label > 0)
+*        among the first k rows kept.
 */
 class PrecisionNMSMetric: public Metric {
  public:
@@ -195,8 +203,9 @@ class PrecisionNMSMetric: public Metric {
     const double* tiebreaks = tiebreaks_;
     std::stable_sort(sorted_idx.begin(), sorted_idx.end(),
                      [score, tiebreaks](data_size_t a, data_size_t b) {
-                       if (score[a] != score[b] || tiebreaks == nullptr) {
-                         return score[a] > score[b];
+                       const double sa = SortableScore(score[a]), sb = SortableScore(score[b]);
+                       if (sa != sb || tiebreaks == nullptr) {
+                         return sa > sb;
                        }
                        return tiebreaks[a] > tiebreaks[b];
                      });
@@ -211,7 +220,7 @@ class PrecisionNMSMetric: public Metric {
       if (!kept.empty()) {
         double distance = std::numeric_limits<double>::infinity();
         for (double k : kept) {
-          distance = std::min(distance, relative_ ? std::fabs(x - k) / std::max(x, k) : std::fabs(x - k));
+          distance = std::min(distance, relative_ ? RelativeDistance(x, k) : std::fabs(x - k));
         }
         if (!(distance > tolerance_)) {
           continue;
@@ -228,6 +237,12 @@ class PrecisionNMSMetric: public Metric {
       const int num_hit = hits.empty() ? 0 : hits[std::min(k, hits.size()) - 1];
       (*out)[i] = static_cast<double>(num_hit) / k;
     }
+  }
+
+  /*! \brief |x - k| relative to the larger magnitude, 0 when both are 0 */
+  static double RelativeDistance(double x, double k) {
+    const double scale = std::max(std::fabs(x), std::fabs(k));
+    return scale == 0.0 ? 0.0 : std::fabs(x - k) / scale;
   }
 
   std::vector<double> Eval(const double* score, const ObjectiveFunction*) const override {

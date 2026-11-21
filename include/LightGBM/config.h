@@ -1092,14 +1092,14 @@ struct Config {
 
   // check = >=0.0
   // desc = used only with ``precision_nms`` metric
-  // desc = rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed
+  // desc = rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed, and only the best row of each ``nms_group`` is considered: a group whose best row is suppressed counts no row
   double nms_tolerance = 0.0;
 
   // type = enum
   // options = absolute, relative
   // desc = used only with ``precision_nms`` metric
   // desc = ``absolute``, the distance between two coordinates is their difference
-  // desc = ``relative``, the distance is their difference divided by the larger of the two
+  // desc = ``relative``, the distance is their difference divided by the larger of their absolute values, 0 when both are 0
   std::string nms_tolerance_mode = "absolute";
 
   // check = >0

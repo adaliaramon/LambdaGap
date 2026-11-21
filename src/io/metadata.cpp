@@ -1007,6 +1007,10 @@ void Metadata::SaveBinaryToFile(BinaryWriter* writer) const {
     Log::Warning("Please note that `init_score` is not saved in binary file.\n"
       "If you need it, please set it again after loading Dataset.");
   }
+  if (!nms_groups_.empty() || !nms_coordinates_.empty() || !nms_tiebreaks_.empty()) {
+    Log::Warning("Please note that the nms_* fields are not saved in binary file.\n"
+      "If you need them, please set them again after loading Dataset.");
+  }
 }
 
 size_t Metadata::SizesInByte() const {

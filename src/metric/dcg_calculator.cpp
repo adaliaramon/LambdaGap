@@ -48,8 +48,10 @@ void DCGCalculator::Init(const std::vector<double>& input_label_gain) {
   for (size_t i = 0; i < input_label_gain.size(); ++i) {
     label_gain_[i] = static_cast<double>(input_label_gain[i]);
   }
-  discount_.resize(kMaxPosition);
-  for (data_size_t i = 0; i < kMaxPosition; ++i) {
+  // One more than the positions: the lambdaloss targets read the discount of rank
+  // difference + 1, which is kMaxPosition in a query of kMaxPosition rows
+  discount_.resize(kMaxPosition + 1);
+  for (data_size_t i = 0; i <= kMaxPosition; ++i) {
     discount_[i] = 1.0 / std::log2(2.0 + i);
   }
 }

@@ -4,6 +4,7 @@ metric, the precision_nms metric with its dataset fields, and lambdagap_weight."
 
 import numpy as np
 import pytest
+from scipy import sparse
 
 import lightgbm as lgb
 
@@ -99,6 +100,11 @@ def reference_precision(score, y, sizes, k):
     return float(np.mean(values))
 
 
+def relative_distance(x, c):
+    scale = max(abs(x), abs(c))
+    return 0.0 if scale == 0 else abs(x - c) / scale
+
+
 def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, tolerance, relative):
     """Precision at k of the rows kept: by decreasing score, then tie-break, then row
     order; the first row of each group only, and only if its coordinate is farther than
@@ -116,7 +122,7 @@ def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, 
             seen.add(groups[row])
             x = coordinates[row]
             if kept:
-                distance = min(abs(x - c) / max(x, c) if relative else abs(x - c) for c in kept)
+                distance = min(relative_distance(x, c) if relative else abs(x - c) for c in kept)
                 if not distance > tolerance:
                     continue
             kept.append(x)
@@ -248,3 +254,49 @@ def test_lambdagap_weight_is_read_back_from_a_saved_model():
     booster, _ = train(params, X, y, sizes)
     loaded = lgb.Booster(model_str=booster.model_to_string())
     assert loaded.params["lambdagap_weight"] == 0.5
+
+
+def test_precision_nms_relative_with_zero_and_negative_coordinates():
+    X, y, sizes = ranking_data()
+    groups, _, tiebreaks = nms_fields(len(y))
+    coordinates = np.random.default_rng(1).choice([-2.0, -1.0, 0.0, 1.0, 2.0], len(y))
+    params = base_params(metric="precision_nms", nms_tolerance=0.1, nms_tolerance_mode="relative")
+    ds, valid = train_and_valid(params, X, y, sizes)
+    valid.set_field("nms_group", groups)
+    valid.set_field("nms_coordinate", coordinates)
+    booster, record = train(params, X, y, sizes, valid=valid, ds=ds)
+    score = booster.predict(X)
+    for k in EVAL_AT:
+        expected = reference_precision_nms(score, y, sizes, k, groups, coordinates, None, 0.1, True)
+        assert record["valid"][f"precision_nms@{k}"][-1] == pytest.approx(expected, abs=1e-12)
+
+
+def dumped_bins(data, label, tmp_path, name, **params):
+    """The bin of every row and feature of a dataset, as LightGBM dumps them."""
+    params = {"verbose": -1, "enable_bundle": False, "max_bin": 15, **params}
+    ds = lgb.Dataset(data, label, params=params).construct()
+    path = tmp_path / f"{name}.txt"
+    ds._dump_text(path)
+    text = path.read_text()
+    return text[text.index("forced_bins"):]
+
+
+def test_sparse_bins_match_dense_bins(tmp_path):
+    # Mostly zero features, stored as sparse bins, whatever the input format and the
+    # number of threads that push their values: the same bin in every row as when
+    # stored as dense bins
+    rng = np.random.default_rng(0)
+    n, features = 30_000, 6
+    X = rng.integers(1, 9, (n, features)) * (rng.random((n, features)) < [0.002, 0.03, 0.1, 0.15, 0.05, 0.0])
+    X[rng.integers(0, n, 50), 5] = 7  # A feature with a few values only
+    X = X.astype(np.float64)
+    y = rng.random(n)
+    csv = tmp_path / "data.csv"
+    np.savetxt(csv, np.column_stack([y, X]), delimiter=",", fmt="%g")
+    expected = dumped_bins(X, y, tmp_path, "dense", sparse_threshold=1.0, num_threads=1)
+    inputs = {"numpy": X, "csr": sparse.csr_matrix(X), "csc": sparse.csc_matrix(X), "file": str(csv)}
+    for name, data in inputs.items():
+        for threads in (1, 4):
+            label = None if name == "file" else y
+            got = dumped_bins(data, label, tmp_path, f"{name}-{threads}", num_threads=threads)
+            assert got == expected, f"{name} with {threads} threads"

@@ -324,7 +324,10 @@ class LambdarankNDCG : public RankingObjective {
         continue;
       }
 
-      // Exclude pairs guaranteed to have 0 contribution to the gradient
+      // Exclude pairs guaranteed to have 0 contribution to the gradient. i +
+      // truncation_level_ capped at cnt, so a huge truncation level cannot overflow
+      const data_size_t i_plus_k = static_cast<data_size_t>(
+          std::min<int64_t>(static_cast<int64_t>(i) + truncation_level_, cnt));
       data_size_t start;
       data_size_t end;
       switch (lambdarank_target_) {
@@ -336,7 +339,7 @@ class LambdarankNDCG : public RankingObjective {
           // Beyond the truncation level, only the pair at distance truncation_level_
           // has a non-zero weight
           if (i >= truncation_level_) {
-            start = i + truncation_level_;
+            start = i_plus_k;
             end = std::min(start + 1, cnt);
           } else {
             start = truncation_level_;
@@ -346,7 +349,7 @@ class LambdarankNDCG : public RankingObjective {
         case LambdaRankTarget::LAMBDAGAP_X_PLUS:
           // Beyond the truncation level, only pairs at distance truncation_level_ or
           // more have a non-zero weight
-          start = i >= truncation_level_ ? i + truncation_level_ : truncation_level_;
+          start = i >= truncation_level_ ? i_plus_k : truncation_level_;
           end = cnt;
           break;
         case LambdaRankTarget::ARP_K:
@@ -356,11 +359,11 @@ class LambdarankNDCG : public RankingObjective {
           end = cnt;
           break;
         case LambdaRankTarget::LAMBDAGAP_S:
-          start = i + truncation_level_;
+          start = i_plus_k;
           end = std::min(start + 1, cnt);
           break;
         case LambdaRankTarget::LAMBDAGAP_X:
-          start = i + truncation_level_;
+          start = i_plus_k;
           end = cnt;
           break;
         default:
@@ -503,7 +506,7 @@ class LambdarankNDCG : public RankingObjective {
           const double low_label = static_cast<double>(label[low]);
           delta_pair = high_label - low_label;
         } else {
-          Log::Fatal("LambdaRank target %d not implemented", lambdarank_target_);
+          Log::Fatal("LambdaRank target %d not implemented", static_cast<int>(lambdarank_target_));
         }
 
         if (delta_pair == 0) {
@@ -538,7 +541,7 @@ class LambdarankNDCG : public RankingObjective {
         hessians[i] = static_cast<score_t>(hessians[i] * norm_factor);
       }
     }
-    effective_pairs_[query_id] = 2.0 * static_cast<double>(count_lambdas) / (cnt * (cnt - 1));
+    effective_pairs_[query_id] = 2.0 * static_cast<double>(count_lambdas) / (static_cast<double>(cnt) * (cnt - 1));
   }
 
   inline double GetSigmoid(double score) const {
@@ -646,7 +649,7 @@ class LambdarankNDCG : public RankingObjective {
   /*! \brief Gains for labels */
   std::vector<double> label_gain_;
   /*! \brief Target metric of lambdarank */
-  LambdaRankTarget lambdarank_target_;
+  LambdaRankTarget lambdarank_target_ = LambdaRankTarget::NDCG;
   /*! \brief Number of bins in simoid table */
   size_t _sigmoid_bins = 1024 * 1024;
   /*! \brief Minimal input of sigmoid table */
@@ -658,7 +661,7 @@ class LambdarankNDCG : public RankingObjective {
   /*! \brief Current iteration */
   mutable int iter_ = 0;
   /*! \brief LambdaGap weight */
-  double lambdagap_weight_;
+  double lambdagap_weight_ = 0.0;
 };
 
 /*!

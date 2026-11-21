@@ -83,16 +83,11 @@ double DCGCalculator::CalMaxDCGAtK(data_size_t k, const label_t* label, data_siz
 }
 
 double DCGCalculator::CalMaxBDCGAtK(data_size_t k, const label_t* label, data_size_t num_data) {
+  // The relevant rows (label above 0) first: as many discounts as them, up to k
+  const data_size_t relevant = static_cast<data_size_t>(
+      std::count_if(label, label + num_data, [](label_t l) { return l > 0; }));
   double ret = 0.0f;
-  int relevant_count = 0;
-  for (data_size_t i = 0; i < num_data; ++i) {
-    if (label[i] > 0) {
-      ++relevant_count;
-    }
-  }
-  if (k > num_data) { k = num_data; }
-  if (k > relevant_count) { k = relevant_count; }
-  for (data_size_t j = 0; j < k; ++j) {
+  for (data_size_t j = 0; j < std::min({k, num_data, relevant}); ++j) {
     ret += discount_[j];
   }
   return ret;

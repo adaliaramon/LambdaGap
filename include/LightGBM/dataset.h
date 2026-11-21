@@ -128,8 +128,8 @@ class Metadata {
   void SetPosition(int64_t n_chunks, struct ArrowArray* chunks, struct ArrowSchema* schema);
 
   /*!
-  * \brief Set the group of each row for the precision_nms metric: within a query, only
-  *        the best scored row of each group counts
+  * \brief Set the group of each row for the precision_nms metric: within a query, at
+  *        most one row of each group counts (see nms_group_mode)
   */
   void SetNmsGroup(const int32_t* nms_group, data_size_t len);
 

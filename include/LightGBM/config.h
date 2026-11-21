@@ -991,24 +991,24 @@ struct Config {
 
   // desc = used only in ``lambdarank`` application
   // desc = controls which metric to use for lambdarank gradient calculation
-  // descl2 = ``ranknet``, RankNet skipping equally-labeled documents__
-  // descl2 = ``bin-ranknet``, Binarized RankNet__
+  // descl2 = ``ranknet``, RankNet skipping equally-labeled documents
+  // descl2 = ``bin-ranknet``, Binarized RankNet
   // descl2 = ``ndcg``, `NDCG <https://en.wikipedia.org/wiki/Discounted_cumulative_gain#Normalized_DCG>`__
-  // descl2 = ``bndcg``, `Binarized NDCG`__
+  // descl2 = ``bndcg``, Binarized NDCG
   // descl2 = ``lambdaloss-ndcg``, `NDCG with LambdaLoss approach (NDCG-Loss2) <https://dl.acm.org/doi/10.1145/3269206.3271784>`__
-  // descl2 = ``lambdaloss-bndcg``, `Binarized NDCG-Loss2`__
-  // descl2 = ``lambdaloss-ndcg-plus-plus``, `NDCG-Loss2++`__
-  // descl2 = ``lambdaloss-bndcg-plus-plus``, `BNDCG-Loss2++`__
+  // descl2 = ``lambdaloss-bndcg``, Binarized NDCG-Loss2
+  // descl2 = ``lambdaloss-ndcg-plus-plus``, NDCG-Loss2++
+  // descl2 = ``lambdaloss-bndcg-plus-plus``, BNDCG-Loss2++
   // descl2 = ``precision``, `Precision@k <https://en.wikipedia.org/wiki/Information_retrieval#Precision_and_recall>`__
-  // descl2 = ``arpk``, `Average Relevance Position@k`__
+  // descl2 = ``arpk``, Average Relevance Position@k
   // descl2 = ``lambdaloss-arp1``, `ARP with LambdaLoss approach (ARP-Loss1) <https://dl.acm.org/doi/10.1145/3269206.3271784>`__
   // descl2 = ``lambdaloss-arp2``, `ARP with LambdaLoss approach (ARP-Loss2) <https://dl.acm.org/doi/10.1145/3269206.3271784>`__
-  // descl2 = ``lambdagap-s``, `LambdaGap-S approach`__
-  // descl2 = ``lambdagap-x``, `LambdaGap-X approach`__
-  // descl2 = ``lambdagap-s-plus``, `LambdaGap-S+ approach`__
-  // descl2 = ``lambdagap-x-plus``, `LambdaGap-X+ approach`__
-  // descl2 = ``lambdagap-s-plus-plus``, `LambdaGap-S++ approach`__
-  // descl2 = ``lambdagap-x-plus-plus``, `LambdaGap-X++ approach`__
+  // descl2 = ``lambdagap-s``, LambdaGap-S approach
+  // descl2 = ``lambdagap-x``, LambdaGap-X approach
+  // descl2 = ``lambdagap-s-plus``, LambdaGap-S+ approach
+  // descl2 = ``lambdagap-x-plus``, LambdaGap-X+ approach
+  // descl2 = ``lambdagap-s-plus-plus``, LambdaGap-S++ approach
+  // descl2 = ``lambdagap-x-plus-plus``, LambdaGap-X++ approach
   std::string lambdarank_target = "ndcg";
 
   // desc = used only in ``lambdarank`` application

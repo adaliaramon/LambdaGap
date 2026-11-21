@@ -1,5 +1,9 @@
-#ifndef LIGHTGBM_METRIC_PRECISION_METRIC_HPP_
-#define LIGHTGBM_METRIC_PRECISION_METRIC_HPP_
+/*!
+ * Copyright (c) 2025-2026 The LambdaGap contributors. All rights reserved.
+ * Licensed under the MIT License. See LICENSE file in the project root for license information.
+ */
+#ifndef LIGHTGBM_SRC_METRIC_PRECISION_METRIC_HPP_
+#define LIGHTGBM_SRC_METRIC_PRECISION_METRIC_HPP_
 
 #include <LightGBM/metric.h>
 #include <LightGBM/utils/common.h>
@@ -259,4 +263,4 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
 
 }  // namespace LightGBM
 
-#endif   // LIGHTGBM_METRIC_PRECISION_METRIC_HPP_
+#endif  // LIGHTGBM_SRC_METRIC_PRECISION_METRIC_HPP_

@@ -1206,6 +1206,54 @@ Objective Parameters
 
    -  set this to ``false`` to enforce the original lambdarank algorithm
 
+-  ``lambdarank_target`` :raw-html:`<a id="lambdarank_target" title="Permalink to this parameter" href="#lambdarank_target">&#x1F517;&#xFE0E;</a>`, default = ``ndcg``, type = string
+
+   -  used only in ``lambdarank`` application
+
+   -  controls which metric to use for lambdarank gradient calculation
+
+      -  ``ranknet``, RankNet skipping equally-labeled documents
+
+      -  ``bin-ranknet``, Binarized RankNet
+
+      -  ``ndcg``, `NDCG <https://en.wikipedia.org/wiki/Discounted_cumulative_gain#Normalized_DCG>`__
+
+      -  ``bndcg``, Binarized NDCG
+
+      -  ``lambdaloss-ndcg``, `NDCG with LambdaLoss approach (NDCG-Loss2) <https://dl.acm.org/doi/10.1145/3269206.3271784>`__
+
+      -  ``lambdaloss-bndcg``, Binarized NDCG-Loss2
+
+      -  ``lambdaloss-ndcg-plus-plus``, NDCG-Loss2++
+
+      -  ``lambdaloss-bndcg-plus-plus``, BNDCG-Loss2++
+
+      -  ``precision``, `Precision@k <https://en.wikipedia.org/wiki/Information_retrieval#Precision_and_recall>`__
+
+      -  ``arpk``, Average Relevance Position@k
+
+      -  ``lambdaloss-arp1``, `ARP with LambdaLoss approach (ARP-Loss1) <https://dl.acm.org/doi/10.1145/3269206.3271784>`__
+
+      -  ``lambdaloss-arp2``, `ARP with LambdaLoss approach (ARP-Loss2) <https://dl.acm.org/doi/10.1145/3269206.3271784>`__
+
+      -  ``lambdagap-s``, LambdaGap-S approach
+
+      -  ``lambdagap-x``, LambdaGap-X approach
+
+      -  ``lambdagap-s-plus``, LambdaGap-S+ approach
+
+      -  ``lambdagap-x-plus``, LambdaGap-X+ approach
+
+      -  ``lambdagap-s-plus-plus``, LambdaGap-S++ approach
+
+      -  ``lambdagap-x-plus-plus``, LambdaGap-X++ approach
+
+-  ``lambdagap_weight`` :raw-html:`<a id="lambdagap_weight" title="Permalink to this parameter" href="#lambdagap_weight">&#x1F517;&#xFE0E;</a>`, default = ``1.0``, type = double
+
+   -  used only in ``lambdarank`` application
+
+   -  controls the weight used when using LambdaGap hybrid approaches
+
 -  ``label_gain`` :raw-html:`<a id="label_gain" title="Permalink to this parameter" href="#label_gain">&#x1F517;&#xFE0E;</a>`, default = ``0,1,3,7,15,31,63,...,2^30-1``, type = multi-double
 
    -  used only in ``lambdarank`` application
@@ -1259,6 +1307,8 @@ Metric Parameters
 
       -  ``map``, `MAP <https://makarandtapaswi.wordpress.com/2012/07/02/intuition-behind-average-precision-and-map/>`__, aliases: ``mean_average_precision``
 
+      -  ``precision_nms``, precision at k after non-maximum suppression, which needs the ``nms_group`` and ``nms_coordinate`` dataset fields, and breaks ties between equal scores by the optional ``nms_tiebreak`` field, then by row order (see ``nms_tolerance``)
+
       -  ``auc``, `AUC <https://en.wikipedia.org/wiki/Receiver_operating_characteristic#Area_under_the_curve>`__
 
       -  ``average_precision``, `average precision score <https://scikit-learn.org/stable/modules/generated/sklearn.metrics.average_precision_score.html>`__
@@ -1300,6 +1350,28 @@ Metric Parameters
    -  used only with ``ndcg`` and ``map`` metrics
 
    -  `NDCG <https://en.wikipedia.org/wiki/Discounted_cumulative_gain#Normalized_DCG>`__ and `MAP <https://makarandtapaswi.wordpress.com/2012/07/02/intuition-behind-average-precision-and-map/>`__ evaluation positions, separated by ``,``
+
+-  ``nms_tolerance`` :raw-html:`<a id="nms_tolerance" title="Permalink to this parameter" href="#nms_tolerance">&#x1F517;&#xFE0E;</a>`, default = ``0.0``, type = double, constraints: ``nms_tolerance >= 0.0``
+
+   -  used only with ``precision_nms`` metric
+
+   -  rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed, and at most one row of each ``nms_group`` counts (see ``nms_group_mode``)
+
+-  ``nms_tolerance_mode`` :raw-html:`<a id="nms_tolerance_mode" title="Permalink to this parameter" href="#nms_tolerance_mode">&#x1F517;&#xFE0E;</a>`, default = ``absolute``, type = enum, options: ``absolute``, ``relative``
+
+   -  used only with ``precision_nms`` metric
+
+   -  ``absolute``, the distance between two coordinates is their difference
+
+   -  ``relative``, the distance is their difference divided by the larger of their absolute values, 0 when both are 0
+
+-  ``nms_group_mode`` :raw-html:`<a id="nms_group_mode" title="Permalink to this parameter" href="#nms_group_mode">&#x1F517;&#xFE0E;</a>`, default = ``best_row``, type = enum, options: ``best_row``, ``first_kept``
+
+   -  used only with ``precision_nms`` metric
+
+   -  ``best_row``, each ``nms_group`` is represented by its best row only: a group whose best row is suppressed counts no row
+
+   -  ``first_kept``, at most one row of each ``nms_group`` is kept: a group whose best row is suppressed can be represented by its next row
 
 -  ``multi_error_top_k`` :raw-html:`<a id="multi_error_top_k" title="Permalink to this parameter" href="#multi_error_top_k">&#x1F517;&#xFE0E;</a>`, default = ``1``, type = int, constraints: ``multi_error_top_k > 0``
 

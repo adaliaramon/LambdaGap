@@ -94,7 +94,7 @@ def reference_precision(score, y, sizes, k):
     """Share of relevant rows among the k best scored, equal scores by row order."""
     starts = query_starts(sizes)
     values = []
-    for start, end in zip(starts[:-1], starts[1:]):
+    for start, end in zip(starts[:-1], starts[1:], strict=True):
         order = np.argsort(-score[start:end], kind="stable")
         values.append(np.sum(y[start:end][order][:k] > 0.5) / k)
     return float(np.mean(values))
@@ -112,7 +112,7 @@ def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, 
     before."""
     starts = query_starts(sizes)
     values = []
-    for start, end in zip(starts[:-1], starts[1:]):
+    for start, end in zip(starts[:-1], starts[1:], strict=True):
         rows = np.arange(start, end)
         keys = (rows, -tiebreaks[rows]) if tiebreaks is not None else (rows,)
         order = rows[np.lexsort((*keys, -score[rows]))]
@@ -191,7 +191,16 @@ def test_precision_nms_metric(relative, with_tiebreak, discrete, first_kept):
     score = booster.predict(X)
     for k in EVAL_AT:
         expected = reference_precision_nms(
-            score, y, sizes, k, groups, coordinates, tiebreaks if with_tiebreak else None, tolerance, relative, first_kept
+            score,
+            y,
+            sizes,
+            k,
+            groups,
+            coordinates,
+            tiebreaks if with_tiebreak else None,
+            tolerance,
+            relative,
+            first_kept,
         )
         assert record["valid"][f"precision_nms@{k}"][-1] == pytest.approx(expected, abs=1e-12)
 
@@ -283,7 +292,7 @@ def dumped_bins(data, label, tmp_path, name, **params):
     path = tmp_path / f"{name}.txt"
     ds._dump_text(path)
     text = path.read_text()
-    return text[text.index("forced_bins"):]
+    return text[text.index("forced_bins") :]
 
 
 def test_sparse_bins_match_dense_bins(tmp_path):

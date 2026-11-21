@@ -1,3 +1,84 @@
+# LambdaGap: a fork of LightGBM for learning to rank
+
+This repository is a fork of [LightGBM](https://github.com/lightgbm-org/LightGBM) that adds
+ranking objectives and metrics. Everything else is upstream LightGBM, and the fork is kept
+rebased on upstream's `main` branch. The rest of this README is upstream's.
+
+## What the fork adds
+
+All of it is opt-in, through new parameters and dataset fields.
+
+**Targets of the `lambdarank` objective.** `lambdarank_target` chooses the ranking measure
+that the lambdarank gradients optimise. `lambdarank_truncation_level` is its *k*.
+
+| `lambdarank_target` | Optimises |
+|---|---|
+| `ndcg` (default) | NDCG, as upstream's lambdarank |
+| `lambdaloss-ndcg`, `lambdaloss-ndcg-plus-plus` | NDCG with the LambdaLoss weights (NDCG-Loss2, NDCG-Loss2++) |
+| `bndcg`, `lambdaloss-bndcg`, `lambdaloss-bndcg-plus-plus` | NDCG with binary relevance, and its LambdaLoss variants |
+| `precision` | Precision at *k* |
+| `arpk`, `lambdaloss-arp1`, `lambdaloss-arp2` | Average relevance position (at *k*, ARP-Loss1, ARP-Loss2) |
+| `ranknet`, `bin-ranknet` | RankNet, with graded or binary relevance |
+| `lambdagap-s`, `lambdagap-x` | Only the pairs of rows *k* ranks apart (`-s`) or at least *k* ranks apart (`-x`) |
+| `lambdagap-s-plus`, `lambdagap-x-plus` | The pairs across the top *k*, plus the `-s` or `-x` pairs weighted by `lambdagap_weight` |
+| `lambdagap-s-plus-plus`, `lambdagap-x-plus-plus` | As `-plus`, with the pairs across the top *k* weighted by rank |
+
+The `precision`, `bndcg`, `arpk`, `bin-ranknet` and `lambdagap` targets treat relevance as
+binary: a pair of two rows with labels above 0 does not count.
+
+`lambdagap_weight` (default 1.0) weighs the LambdaGap pairs in the hybrid targets, and the
+LambdaLoss term in the `-plus-plus` LambdaLoss targets.
+
+**Metrics.**
+
+- `precision`: precision at each *k* of `eval_at`, the share of relevant rows (label > 0.5)
+  among the *k* best scored rows of each query.
+- `precision_nms`: precision at *k* after non-maximum suppression. Within a query, rows go
+  by decreasing score. A row is suppressed when its coordinate is within `nms_tolerance` of
+  a row already kept (`nms_tolerance_mode`: `absolute`, or `relative` to the larger
+  magnitude). At most one row of each group counts: with `nms_group_mode=best_row`
+  (default) a group is represented by its best row only, with `first_kept` by its first
+  row not suppressed. It needs two dataset fields, `nms_group` (int32) and
+  `nms_coordinate` (float64); the optional `nms_tiebreak` (float64) orders equal scores,
+  higher first, before row order. Without the fields it is NaN.
+
+Both metrics are higher-is-better for early stopping.
+
+```python
+import lightgbm as lgb
+
+params = {
+    "objective": "lambdarank",
+    "lambdarank_target": "lambdagap-s-plus",
+    "lambdarank_truncation_level": 5,
+    "metric": ["ndcg", "precision_nms"],
+    "eval_at": [1, 5],
+    "nms_tolerance": 0.01,
+}
+train = lgb.Dataset(X_train, y_train, group=train_query_sizes).construct()
+valid = lgb.Dataset(X_valid, y_valid, group=valid_query_sizes, reference=train).construct()
+valid.set_field("nms_group", valid_groups)            # int32, one per row
+valid.set_field("nms_coordinate", valid_coordinates)  # float64, one per row
+booster = lgb.train(params, train, valid_sets=[valid], callbacks=[lgb.early_stopping(100)])
+```
+
+The fork's tests are in `tests/python_package_test/test_lambdagap.py`.
+
+## Building
+
+As upstream LightGBM (C++17, CMake 3.28 or newer). For the Python package:
+
+```sh
+git clone --recursive https://github.com/adaliaramon/LambdaGap.git
+cd LambdaGap
+sh ./build-python.sh bdist_wheel
+pip install dist/lightgbm-*.whl
+```
+
+The package is still called `lightgbm`, so it replaces an installed upstream LightGBM.
+
+---
+
 <img src=https://github.com/lightgbm-org/LightGBM/blob/main/docs/logo/LightGBM_logo_black_text.svg width=300 />
 
 > [!NOTE]

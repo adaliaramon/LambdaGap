@@ -1355,7 +1355,7 @@ Metric Parameters
 
    -  used only with ``precision_nms`` metric
 
-   -  rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed, and at most one row of each ``nms_group`` counts (see ``nms_group_mode``)
+   -  rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed, and rows of the same ``nms_group`` can be limited (see ``nms_group_mode``)
 
 -  ``nms_tolerance_mode`` :raw-html:`<a id="nms_tolerance_mode" title="Permalink to this parameter" href="#nms_tolerance_mode">&#x1F517;&#xFE0E;</a>`, default = ``absolute``, type = enum, options: ``absolute``, ``relative``
 
@@ -1365,13 +1365,15 @@ Metric Parameters
 
    -  ``relative``, the distance is their difference divided by the larger of their absolute values, 0 when both are 0
 
--  ``nms_group_mode`` :raw-html:`<a id="nms_group_mode" title="Permalink to this parameter" href="#nms_group_mode">&#x1F517;&#xFE0E;</a>`, default = ``best_row``, type = enum, options: ``best_row``, ``first_kept``
+-  ``nms_group_mode`` :raw-html:`<a id="nms_group_mode" title="Permalink to this parameter" href="#nms_group_mode">&#x1F517;&#xFE0E;</a>`, default = ``best_row``, type = enum, options: ``best_row``, ``first_kept``, ``none``
 
    -  used only with ``precision_nms`` metric
 
    -  ``best_row``, each ``nms_group`` is represented by its best row only: a group whose best row is suppressed counts no row
 
    -  ``first_kept``, at most one row of each ``nms_group`` is kept: a group whose best row is suppressed can be represented by its next row
+
+   -  ``none``, groups do not limit the rows kept, only ``nms_tolerance`` does; the ``nms_group`` field is not needed
 
 -  ``multi_error_top_k`` :raw-html:`<a id="multi_error_top_k" title="Permalink to this parameter" href="#multi_error_top_k">&#x1F517;&#xFE0E;</a>`, default = ``1``, type = int, constraints: ``multi_error_top_k > 0``
 

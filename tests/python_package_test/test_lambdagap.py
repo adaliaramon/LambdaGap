@@ -105,11 +105,13 @@ def relative_distance(x, c):
     return 0.0 if scale == 0 else abs(x - c) / scale
 
 
-def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, tolerance, relative, first_kept=False):
+def reference_precision_nms(
+    score, y, sizes, k, groups, coordinates, tiebreaks, tolerance, relative, group_mode="best_row"
+):
     """Precision at k of the rows kept: by decreasing score, then tie-break, then row
     order; a row only if its coordinate is farther than the tolerance from that of every
     row kept before, and if no row of its group was kept (first_kept) or came (best_row)
-    before."""
+    before, or whatever its group (none)."""
     starts = query_starts(sizes)
     values = []
     for start, end in zip(starts[:-1], starts[1:], strict=True):
@@ -118,9 +120,9 @@ def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, 
         order = rows[np.lexsort((*keys, -score[rows]))]
         seen, kept, hits = set(), [], 0
         for row in order:
-            if groups[row] in seen:
+            if group_mode != "none" and groups[row] in seen:
                 continue
-            if not first_kept:
+            if group_mode == "best_row":
                 seen.add(groups[row])
             x = coordinates[row]
             if kept:
@@ -168,11 +170,11 @@ def test_precision_metric(discrete):
         assert record["valid"][f"precision@{k}"][-1] == pytest.approx(expected, abs=1e-12)
 
 
-@pytest.mark.parametrize("first_kept", [False, True])
+@pytest.mark.parametrize("group_mode", ["best_row", "first_kept", "none"])
 @pytest.mark.parametrize("relative", [False, True])
 @pytest.mark.parametrize("with_tiebreak", [False, True])
 @pytest.mark.parametrize("discrete", [False, True])
-def test_precision_nms_metric(relative, with_tiebreak, discrete, first_kept):
+def test_precision_nms_metric(relative, with_tiebreak, discrete, group_mode):
     X, y, sizes = ranking_data(discrete=discrete)
     groups, coordinates, tiebreaks = nms_fields(len(y))
     tolerance = 0.002 if relative else 0.25
@@ -180,7 +182,7 @@ def test_precision_nms_metric(relative, with_tiebreak, discrete, first_kept):
         metric="precision_nms",
         nms_tolerance=tolerance,
         nms_tolerance_mode="relative" if relative else "absolute",
-        nms_group_mode="first_kept" if first_kept else "best_row",
+        nms_group_mode=group_mode,
     )
     ds, valid = train_and_valid(params, X, y, sizes)
     valid.set_field("nms_group", groups)
@@ -200,7 +202,7 @@ def test_precision_nms_metric(relative, with_tiebreak, discrete, first_kept):
             tiebreaks if with_tiebreak else None,
             tolerance,
             relative,
-            first_kept,
+            group_mode,
         )
         assert record["valid"][f"precision_nms@{k}"][-1] == pytest.approx(expected, abs=1e-12)
 
@@ -317,15 +319,18 @@ def test_sparse_bins_match_dense_bins(tmp_path):
 
 
 def test_nms_group_modes_differ():
-    # A group whose best row is suppressed: counted by its next row in first_kept only
+    # A group whose best row is suppressed: counted by its next row in first_kept, and
+    # groups not limiting the rows at all in none, which needs no nms_group field
     X, y, sizes = ranking_data()
     groups, coordinates, _ = nms_fields(len(y))
     values = {}
-    for mode in ("best_row", "first_kept"):
+    for mode in ("best_row", "first_kept", "none"):
         params = base_params(metric="precision_nms", nms_tolerance=0.25, nms_group_mode=mode)
         ds, valid = train_and_valid(params, X, y, sizes)
-        valid.set_field("nms_group", groups)
+        if mode != "none":
+            valid.set_field("nms_group", groups)
         valid.set_field("nms_coordinate", coordinates)
         _, record = train(params, X, y, sizes, valid=valid, ds=ds)
         values[mode] = [record["valid"][f"precision_nms@{k}"][-1] for k in EVAL_AT]
-    assert values["best_row"] != values["first_kept"]
+    assert values["best_row"] != values["first_kept"] != values["none"]
+    assert not any(np.isnan(v) for v in values["none"])

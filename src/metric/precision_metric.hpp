@@ -142,13 +142,17 @@ class PrecisionMetric : public QueryPrecisionMetric {
 * \brief Precision at k after non-maximum suppression. Within a query, rows go by
 *        decreasing score, equal scores by decreasing nms_tiebreak when it is set, then
 *        by row order. A row counts only if its nms_coordinate is farther than
-*        nms_tolerance from the coordinate of every row kept before, and if no row of its
-*        nms_group was kept before (nms_group_mode first_kept) or came before at all
-*        (best_row: a group whose best row is suppressed counts no row). Precision at k
-*        is the share of relevant rows (label > 0) among the first k rows kept.
+*        nms_tolerance from the coordinate of every row kept before, and, by
+*        nms_group_mode, if no row of its nms_group was kept before (first_kept) or came
+*        before at all (best_row: a group whose best row is suppressed counts no row), or
+*        whatever its group (none). Precision at k is the share of relevant rows
+*        (label > 0) among the first k rows kept.
 */
 class PrecisionNMSMetric : public QueryPrecisionMetric {
  public:
+  /*! \brief How nms_group limits the rows kept (nms_group_mode) */
+  enum class GroupMode { kBestRow, kFirstKept, kNone };
+
   explicit PrecisionNMSMetric(const Config& config) : QueryPrecisionMetric(config, "precision_nms") {
     max_k_ = *std::max_element(eval_at_.begin(), eval_at_.end());
     tolerance_ = config.nms_tolerance;
@@ -160,9 +164,11 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
       Log::Fatal("Unknown nms_tolerance_mode: %s", config.nms_tolerance_mode.c_str());
     }
     if (config.nms_group_mode == std::string("best_row")) {
-      first_kept_ = false;
+      group_mode_ = GroupMode::kBestRow;
     } else if (config.nms_group_mode == std::string("first_kept")) {
-      first_kept_ = true;
+      group_mode_ = GroupMode::kFirstKept;
+    } else if (config.nms_group_mode == std::string("none")) {
+      group_mode_ = GroupMode::kNone;
     } else {
       Log::Fatal("Unknown nms_group_mode: %s", config.nms_group_mode.c_str());
     }
@@ -173,14 +179,14 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
     groups_ = metadata.nms_groups();
     coordinates_ = metadata.nms_coordinates();
     tiebreaks_ = metadata.nms_tiebreaks();
-    if (groups_ == nullptr || coordinates_ == nullptr) {
+    if (MissingFields()) {
       // The booster creates the metrics of the training data too, which may not have them
       Log::Warning("The nms_group and nms_coordinate fields are not set: precision_nms is NaN for this dataset");
     }
   }
 
   // The group rule as a template parameter: chosen once per query, not per row
-  template <bool kFirstKept>
+  template <GroupMode kMode>
   void CalPrecisionAtK(data_size_t start, data_size_t num_data, const double* score,
                        std::vector<double>* out) const {
     std::vector<data_size_t> sorted_idx(num_data);
@@ -200,8 +206,10 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
     std::vector<double> kept;
     std::vector<int> hits;  // Relevant rows among the first i + 1 rows kept
     for (data_size_t idx : sorted_idx) {
-      if (kFirstKept ? seen_groups.count(groups_[idx]) > 0
-                     : !seen_groups.insert(groups_[idx]).second) {
+      if (kMode == GroupMode::kFirstKept && seen_groups.count(groups_[idx]) > 0) {
+        continue;
+      }
+      if (kMode == GroupMode::kBestRow && !seen_groups.insert(groups_[idx]).second) {
         continue;
       }
       const double x = coordinates_[idx];
@@ -215,7 +223,7 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
         }
       }
       kept.push_back(x);
-      if (kFirstKept) {
+      if (kMode == GroupMode::kFirstKept) {
         seen_groups.insert(groups_[idx]);
       }
       hits.push_back((hits.empty() ? 0 : hits.back()) + (label_[idx] > 0.5f));
@@ -230,6 +238,12 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
     }
   }
 
+  /*! \brief Whether a field the metric needs is not set: nms_group only limits rows
+   *         with the best_row and first_kept modes */
+  bool MissingFields() const {
+    return coordinates_ == nullptr || (group_mode_ != GroupMode::kNone && groups_ == nullptr);
+  }
+
   /*! \brief |x - k| relative to the larger magnitude, 0 when both are 0 */
   static double RelativeDistance(double x, double k) {
     const double scale = std::max(std::fabs(x), std::fabs(k));
@@ -237,16 +251,22 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
   }
 
   std::vector<double> Eval(const double* score, const ObjectiveFunction*) const override {
-    if (groups_ == nullptr || coordinates_ == nullptr) {
+    if (MissingFields()) {
       return std::vector<double>(eval_at_.size(), std::numeric_limits<double>::quiet_NaN());
     }
     return AverageOverQueries([this, score](data_size_t i, std::vector<double>* out) {
       const data_size_t start = query_boundaries_[i];
       const data_size_t count = query_boundaries_[i + 1] - start;
-      if (first_kept_) {
-        CalPrecisionAtK<true>(start, count, score, out);
-      } else {
-        CalPrecisionAtK<false>(start, count, score, out);
+      switch (group_mode_) {
+        case GroupMode::kBestRow:
+          CalPrecisionAtK<GroupMode::kBestRow>(start, count, score, out);
+          break;
+        case GroupMode::kFirstKept:
+          CalPrecisionAtK<GroupMode::kFirstKept>(start, count, score, out);
+          break;
+        case GroupMode::kNone:
+          CalPrecisionAtK<GroupMode::kNone>(start, count, score, out);
+          break;
       }
     });
   }
@@ -257,7 +277,7 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
   const double* tiebreaks_;
   double tolerance_;
   bool relative_;
-  bool first_kept_;
+  GroupMode group_mode_;
   int max_k_;
 };
 

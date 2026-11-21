@@ -36,11 +36,12 @@ LambdaLoss term in the `-plus-plus` LambdaLoss targets.
 - `precision_nms`: precision at *k* after non-maximum suppression. Within a query, rows go
   by decreasing score. A row is suppressed when its coordinate is within `nms_tolerance` of
   a row already kept (`nms_tolerance_mode`: `absolute`, or `relative` to the larger
-  magnitude). At most one row of each group counts: with `nms_group_mode=best_row`
-  (default) a group is represented by its best row only, with `first_kept` by its first
-  row not suppressed. It needs two dataset fields, `nms_group` (int32) and
-  `nms_coordinate` (float64); the optional `nms_tiebreak` (float64) orders equal scores,
-  higher first, before row order. Without the fields it is NaN.
+  magnitude). Groups can limit the rows kept: with `nms_group_mode=best_row` (default)
+  a group is represented by its best row only, with `first_kept` by its first row not
+  suppressed, and with `none` they do not limit them. It needs the dataset field
+  `nms_coordinate` (float64), and `nms_group` (int32) unless the mode is `none`; the
+  optional `nms_tiebreak` (float64) orders equal scores, higher first, before row order.
+  Without the fields it is NaN.
 
 Both metrics are higher-is-better for early stopping.
 

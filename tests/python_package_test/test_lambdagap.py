@@ -105,10 +105,11 @@ def relative_distance(x, c):
     return 0.0 if scale == 0 else abs(x - c) / scale
 
 
-def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, tolerance, relative):
+def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, tolerance, relative, first_kept=False):
     """Precision at k of the rows kept: by decreasing score, then tie-break, then row
-    order; the first row of each group only, and only if its coordinate is farther than
-    the tolerance from that of every row kept before."""
+    order; a row only if its coordinate is farther than the tolerance from that of every
+    row kept before, and if no row of its group was kept (first_kept) or came (best_row)
+    before."""
     starts = query_starts(sizes)
     values = []
     for start, end in zip(starts[:-1], starts[1:]):
@@ -119,13 +120,15 @@ def reference_precision_nms(score, y, sizes, k, groups, coordinates, tiebreaks, 
         for row in order:
             if groups[row] in seen:
                 continue
-            seen.add(groups[row])
+            if not first_kept:
+                seen.add(groups[row])
             x = coordinates[row]
             if kept:
                 distance = min(relative_distance(x, c) if relative else abs(x - c) for c in kept)
                 if not distance > tolerance:
                     continue
             kept.append(x)
+            seen.add(groups[row])
             hits += y[row] > 0.5
             if len(kept) == k:
                 break
@@ -165,10 +168,11 @@ def test_precision_metric(discrete):
         assert record["valid"][f"precision@{k}"][-1] == pytest.approx(expected, abs=1e-12)
 
 
+@pytest.mark.parametrize("first_kept", [False, True])
 @pytest.mark.parametrize("relative", [False, True])
 @pytest.mark.parametrize("with_tiebreak", [False, True])
 @pytest.mark.parametrize("discrete", [False, True])
-def test_precision_nms_metric(relative, with_tiebreak, discrete):
+def test_precision_nms_metric(relative, with_tiebreak, discrete, first_kept):
     X, y, sizes = ranking_data(discrete=discrete)
     groups, coordinates, tiebreaks = nms_fields(len(y))
     tolerance = 0.002 if relative else 0.25
@@ -176,6 +180,7 @@ def test_precision_nms_metric(relative, with_tiebreak, discrete):
         metric="precision_nms",
         nms_tolerance=tolerance,
         nms_tolerance_mode="relative" if relative else "absolute",
+        nms_group_mode="first_kept" if first_kept else "best_row",
     )
     ds, valid = train_and_valid(params, X, y, sizes)
     valid.set_field("nms_group", groups)
@@ -186,7 +191,7 @@ def test_precision_nms_metric(relative, with_tiebreak, discrete):
     score = booster.predict(X)
     for k in EVAL_AT:
         expected = reference_precision_nms(
-            score, y, sizes, k, groups, coordinates, tiebreaks if with_tiebreak else None, tolerance, relative
+            score, y, sizes, k, groups, coordinates, tiebreaks if with_tiebreak else None, tolerance, relative, first_kept
         )
         assert record["valid"][f"precision_nms@{k}"][-1] == pytest.approx(expected, abs=1e-12)
 
@@ -300,3 +305,18 @@ def test_sparse_bins_match_dense_bins(tmp_path):
             label = None if name == "file" else y
             got = dumped_bins(data, label, tmp_path, f"{name}-{threads}", num_threads=threads)
             assert got == expected, f"{name} with {threads} threads"
+
+
+def test_nms_group_modes_differ():
+    # A group whose best row is suppressed: counted by its next row in first_kept only
+    X, y, sizes = ranking_data()
+    groups, coordinates, _ = nms_fields(len(y))
+    values = {}
+    for mode in ("best_row", "first_kept"):
+        params = base_params(metric="precision_nms", nms_tolerance=0.25, nms_group_mode=mode)
+        ds, valid = train_and_valid(params, X, y, sizes)
+        valid.set_field("nms_group", groups)
+        valid.set_field("nms_coordinate", coordinates)
+        _, record = train(params, X, y, sizes, valid=valid, ds=ds)
+        values[mode] = [record["valid"][f"precision_nms@{k}"][-1] for k in EVAL_AT]
+    assert values["best_row"] != values["first_kept"]

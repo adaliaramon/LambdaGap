@@ -1092,7 +1092,7 @@ struct Config {
 
   // check = >=0.0
   // desc = used only with ``precision_nms`` metric
-  // desc = rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed, and only the best row of each ``nms_group`` is considered: a group whose best row is suppressed counts no row
+  // desc = rows of a query whose ``nms_coordinate`` is within this distance of a better row kept are suppressed, and at most one row of each ``nms_group`` counts (see ``nms_group_mode``)
   double nms_tolerance = 0.0;
 
   // type = enum
@@ -1101,6 +1101,13 @@ struct Config {
   // desc = ``absolute``, the distance between two coordinates is their difference
   // desc = ``relative``, the distance is their difference divided by the larger of their absolute values, 0 when both are 0
   std::string nms_tolerance_mode = "absolute";
+
+  // type = enum
+  // options = best_row, first_kept
+  // desc = used only with ``precision_nms`` metric
+  // desc = ``best_row``, each ``nms_group`` is represented by its best row only: a group whose best row is suppressed counts no row
+  // desc = ``first_kept``, at most one row of each ``nms_group`` is kept: a group whose best row is suppressed can be represented by its next row
+  std::string nms_group_mode = "best_row";
 
   // check = >0
   // desc = used only with ``multi_error`` metric

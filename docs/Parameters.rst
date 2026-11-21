@@ -1248,7 +1248,7 @@ Objective Parameters
 
       -  ``lambdagap-x-plus-plus``, LambdaGap-X++ approach
 
--  ``lambdagap_weight`` :raw-html:`<a id="lambdagap_weight" title="Permalink to this parameter" href="#lambdagap_weight">&#x1F517;&#xFE0E;</a>`, default = ``1.0``, type = double
+-  ``lambdagap_weight`` :raw-html:`<a id="lambdagap_weight" title="Permalink to this parameter" href="#lambdagap_weight">&#x1F517;&#xFE0E;</a>`, default = ``1.0``, type = double, constraints: ``lambdagap_weight >= 0.0``
 
    -  used only in ``lambdarank`` application
 

@@ -176,24 +176,19 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
 
   void Init(const Metadata& metadata, data_size_t num_data) override {
     QueryPrecisionMetric::Init(metadata, num_data);
-    groups_ = metadata.nms_groups();
-    coordinates_ = metadata.nms_coordinates();
-    tiebreaks_ = metadata.nms_tiebreaks();
-    if (MissingFields()) {
-      // The booster creates the metrics of the training data too, which may not have them
-      Log::Warning("The nms_group and nms_coordinate fields are not set: precision_nms is NaN for this dataset");
-    }
+    // The fields are read at each evaluation, as they may be set after the booster is created
+    metadata_ = &metadata;
   }
 
   // The group rule as a template parameter: chosen once per query, not per row
   template <GroupMode kMode>
   void CalPrecisionAtK(data_size_t start, data_size_t num_data, const double* score,
+                       const int32_t* groups, const double* coordinates, const double* tiebreaks,
                        std::vector<double>* out) const {
     std::vector<data_size_t> sorted_idx(num_data);
     for (data_size_t i = 0; i < num_data; ++i) {
       sorted_idx[i] = start + i;
     }
-    const double* tiebreaks = tiebreaks_;
     std::stable_sort(sorted_idx.begin(), sorted_idx.end(),
                      [score, tiebreaks](data_size_t a, data_size_t b) {
                        const double sa = SortableScore(score[a]), sb = SortableScore(score[b]);
@@ -206,13 +201,13 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
     std::vector<double> kept;
     std::vector<int> hits;  // Relevant rows among the first i + 1 rows kept
     for (data_size_t idx : sorted_idx) {
-      if (kMode == GroupMode::kFirstKept && seen_groups.count(groups_[idx]) > 0) {
+      if (kMode == GroupMode::kFirstKept && seen_groups.count(groups[idx]) > 0) {
         continue;
       }
-      if (kMode == GroupMode::kBestRow && !seen_groups.insert(groups_[idx]).second) {
+      if (kMode == GroupMode::kBestRow && !seen_groups.insert(groups[idx]).second) {
         continue;
       }
-      const double x = coordinates_[idx];
+      const double x = coordinates[idx];
       if (!kept.empty()) {
         double distance = std::numeric_limits<double>::infinity();
         for (double k : kept) {
@@ -224,7 +219,7 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
       }
       kept.push_back(x);
       if (kMode == GroupMode::kFirstKept) {
-        seen_groups.insert(groups_[idx]);
+        seen_groups.insert(groups[idx]);
       }
       hits.push_back((hits.empty() ? 0 : hits.back()) + (label_[idx] > 0.5f));
       if (static_cast<int>(kept.size()) == max_k_) {
@@ -238,11 +233,6 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
     }
   }
 
-  /*! \brief Whether a field the metric needs is not set: nms_group only limits rows
-   *         with the best_row and first_kept modes */
-  bool MissingFields() const {
-    return coordinates_ == nullptr || (group_mode_ != GroupMode::kNone && groups_ == nullptr);
-  }
 
   /*! \brief |x - k| relative to the larger magnitude, 0 when both are 0 */
   static double RelativeDistance(double x, double k) {
@@ -251,30 +241,37 @@ class PrecisionNMSMetric : public QueryPrecisionMetric {
   }
 
   std::vector<double> Eval(const double* score, const ObjectiveFunction*) const override {
-    if (MissingFields()) {
+    const int32_t* groups = metadata_->nms_groups();
+    const double* coordinates = metadata_->nms_coordinates();
+    const double* tiebreaks = metadata_->nms_tiebreaks();
+    // nms_group only limits rows with the best_row and first_kept modes
+    if (coordinates == nullptr || (group_mode_ != GroupMode::kNone && groups == nullptr)) {
+      if (!warned_) {
+        Log::Warning("The nms_group and nms_coordinate fields are not set: precision_nms is NaN for this dataset");
+        warned_ = true;
+      }
       return std::vector<double>(eval_at_.size(), std::numeric_limits<double>::quiet_NaN());
     }
-    return AverageOverQueries([this, score](data_size_t i, std::vector<double>* out) {
+    return AverageOverQueries([this, score, groups, coordinates, tiebreaks](data_size_t i, std::vector<double>* out) {
       const data_size_t start = query_boundaries_[i];
       const data_size_t count = query_boundaries_[i + 1] - start;
       switch (group_mode_) {
         case GroupMode::kBestRow:
-          CalPrecisionAtK<GroupMode::kBestRow>(start, count, score, out);
+          CalPrecisionAtK<GroupMode::kBestRow>(start, count, score, groups, coordinates, tiebreaks, out);
           break;
         case GroupMode::kFirstKept:
-          CalPrecisionAtK<GroupMode::kFirstKept>(start, count, score, out);
+          CalPrecisionAtK<GroupMode::kFirstKept>(start, count, score, groups, coordinates, tiebreaks, out);
           break;
         case GroupMode::kNone:
-          CalPrecisionAtK<GroupMode::kNone>(start, count, score, out);
+          CalPrecisionAtK<GroupMode::kNone>(start, count, score, groups, coordinates, tiebreaks, out);
           break;
       }
     });
   }
 
  private:
-  const int32_t* groups_;
-  const double* coordinates_;
-  const double* tiebreaks_;
+  const Metadata* metadata_ = nullptr;
+  mutable bool warned_ = false;
   double tolerance_;
   bool relative_;
   GroupMode group_mode_;

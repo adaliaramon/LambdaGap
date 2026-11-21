@@ -274,9 +274,18 @@ class LambdarankNDCG : public RankingObjective {
             [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
       }
       // The others need no order: their pair weights depend on neither i nor j
-      const auto minmax = std::minmax_element(score, score + cnt);
-      worst_score = *minmax.first;
-      best_score = *minmax.second;
+      best_score = *std::max_element(score, score + cnt);
+      // As the sorted branch below, the worst score skips one row at kMinScore
+      const double* worst = std::min_element(score, score + cnt);
+      worst_score = *worst;
+      if (cnt > 1 && worst_score == kMinScore) {
+        worst_score = std::numeric_limits<double>::infinity();
+        for (data_size_t i = 0; i < cnt; ++i) {
+          if (score + i != worst) {
+            worst_score = std::min(worst_score, score[i]);
+          }
+        }
+      }
     } else {
       std::stable_sort(
           sorted_idx.begin(), sorted_idx.end(),
@@ -312,8 +321,10 @@ class LambdarankNDCG : public RankingObjective {
         continue;
       }
 
-      // Exclude pairs guaranteed to have 0 contribution to the gradient. i +
-      // truncation_level_ capped at cnt, so a huge truncation level cannot overflow
+      // Exclude pairs guaranteed to have 0 contribution to the gradient. With i < k, a
+      // pair with j < k too is skipped by the precision targets: swapping two rows of the
+      // top k does not change precision@k, so their (i < k) term only holds for j >= k.
+      // i + truncation_level_ capped at cnt, so a huge truncation level cannot overflow
       const data_size_t i_plus_k = static_cast<data_size_t>(
           std::min<int64_t>(static_cast<int64_t>(i) + truncation_level_, cnt));
       data_size_t start;

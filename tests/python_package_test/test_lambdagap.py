@@ -334,3 +334,95 @@ def test_nms_group_modes_differ():
         values[mode] = [record["valid"][f"precision_nms@{k}"][-1] for k in EVAL_AT]
     assert values["best_row"] != values["first_kept"] != values["none"]
     assert not any(np.isnan(v) for v in values["none"])
+
+
+def test_nms_fields_of_non_contiguous_queries():
+    X, y, sizes = ranking_data()
+    groups, coordinates, tiebreaks = nms_fields(len(y))
+    ds = lgb.Dataset(X, y, group=sizes, params=base_params(), free_raw_data=False).construct()
+    ds.set_field("nms_group", groups)
+    ds.set_field("nms_coordinate", coordinates)
+    ds.set_field("nms_tiebreak", tiebreaks)
+    # The rows of queries 1, 4 and 7, as a fold of lgb.cv takes them
+    starts = query_starts(sizes)
+    rows = np.concatenate([np.arange(starts[q], starts[q + 1]) for q in (1, 4, 7)])
+    subset = ds.subset(rows).construct()
+    np.testing.assert_array_equal(subset.get_field("nms_group"), groups[rows])
+    np.testing.assert_array_equal(subset.get_field("nms_coordinate"), coordinates[rows])
+    np.testing.assert_array_equal(subset.get_field("nms_tiebreak"), tiebreaks[rows])
+
+
+@pytest.mark.parametrize("kind", ["pyarrow", "polars"])
+def test_nms_fields_from_arrow(kind):
+    X, y, sizes = ranking_data()
+    groups, coordinates, tiebreaks = nms_fields(len(y))
+    if kind == "pyarrow":
+        pa = pytest.importorskip("pyarrow")
+        wrap = lambda values: pa.chunked_array([values])  # noqa: E731
+    else:
+        pl = pytest.importorskip("polars")
+        wrap = pl.Series
+    ds = lgb.Dataset(X, y, group=sizes, params=base_params()).construct()
+    ds.set_field("nms_group", wrap(groups))
+    ds.set_field("nms_coordinate", wrap(coordinates))
+    ds.set_field("nms_tiebreak", wrap(tiebreaks))
+    np.testing.assert_array_equal(ds.get_field("nms_group"), groups)
+    np.testing.assert_array_equal(ds.get_field("nms_coordinate"), coordinates)
+    np.testing.assert_array_equal(ds.get_field("nms_tiebreak"), tiebreaks)
+
+
+def test_nms_fields_survive_a_dataset_rebuild():
+    X, y, sizes = ranking_data()
+    groups, coordinates, _ = nms_fields(len(y))
+    params = base_params(metric="precision_nms")
+    ds = lgb.Dataset(X, y, group=sizes, params=params, free_raw_data=False).construct()
+    valid = lgb.Dataset(X, y, group=sizes, reference=ds, params=params, free_raw_data=False).construct()
+    valid.set_field("nms_group", groups)
+    valid.set_field("nms_coordinate", coordinates)
+    # A dataset parameter changed after construction rebuilds the inner datasets
+    _, record = train({**params, "max_bin": 15}, X, y, sizes, valid=valid, ds=ds)
+    assert not any(np.isnan(record["valid"][f"precision_nms@{k}"][-1]) for k in EVAL_AT)
+
+
+def test_nms_fields_set_after_the_booster_is_created():
+    X, y, sizes = ranking_data()
+    groups, coordinates, _ = nms_fields(len(y))
+    params = base_params(metric="precision_nms")
+    ds, valid = train_and_valid(params, X, y, sizes)
+    booster = lgb.Booster(params, ds)
+    booster.add_valid(valid, "valid")
+    valid.set_field("nms_group", groups)
+    valid.set_field("nms_coordinate", coordinates)
+    booster.update()
+    assert not any(np.isnan(value) for _, _, value, _ in booster.eval_valid())
+
+
+def test_nms_field_of_the_wrong_length_fails():
+    X, y, sizes = ranking_data()
+    _, coordinates, _ = nms_fields(len(y))
+    ds = lgb.Dataset(X, y, group=sizes, params=base_params()).construct()
+    with pytest.raises(lgb.basic.LightGBMError, match="Length of nms_coordinate"):
+        ds.set_field("nms_coordinate", coordinates[:-1])
+
+
+def test_save_binary_does_not_keep_the_nms_fields(tmp_path):
+    X, y, sizes = ranking_data()
+    _, coordinates, _ = nms_fields(len(y))
+    ds = lgb.Dataset(X, y, group=sizes, params=base_params()).construct()
+    ds.set_field("nms_coordinate", coordinates)
+    ds.save_binary(tmp_path / "data.bin")
+    assert lgb.Dataset(tmp_path / "data.bin").construct().get_field("nms_coordinate") is None
+
+
+@pytest.mark.parametrize(
+    ("option", "message"),
+    [
+        ({"nms_group_mode": "best"}, "Unknown nms_group_mode"),
+        ({"nms_tolerance_mode": "ppm"}, "Unknown nms_tolerance_mode"),
+        ({"lambdagap_weight": -1.0}, "lambdagap_weight"),
+    ],
+)
+def test_bad_options_fail_before_training(option, message):
+    X, y, sizes = ranking_data()
+    with pytest.raises(lgb.basic.LightGBMError, match=message):
+        lgb.Dataset(X, y, group=sizes, params=base_params(**option)).construct()

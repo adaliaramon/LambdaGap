@@ -1855,6 +1855,8 @@ class Dataset:
         self.pandas_categorical: Optional[List[List]] = None
         self._params_back_up: Optional[Dict[str, Any]] = None
         self.version = 0
+        # precision_nms fields, kept to set again if the inner Dataset is rebuilt
+        self._nms_fields: Dict[str, np.ndarray] = {}
         self._start_row = 0  # Used when pushing rows one by one.
         # By default, LightGBM assigns features names like Column_0, Column_1, etc.
         # These may be overridden during construction if that raw training data is in a format
@@ -2633,6 +2635,8 @@ class Dataset:
                     params=self.params,
                     position=self.position,
                 )
+            for name, values in self._nms_fields.items():
+                self.set_field(name, values)
             if self.free_raw_data:
                 self.data = None
             self.feature_name = self.get_feature_name()
@@ -2850,6 +2854,7 @@ class Dataset:
             raise Exception(f"Cannot set {field_name} before construct dataset")
         if data is None:
             # set to None
+            self._nms_fields.pop(field_name, None)
             _safe_call(
                 _LIB.LGBM_DatasetSetField(
                     self._handle,
@@ -2865,6 +2870,9 @@ class Dataset:
         if (nwd.is_into_dataframe(data) or nwd.is_into_series(data)) and not isinstance(
             data, (pd_DataFrame, pd_Series)
         ):
+            if field_name.startswith("nms_"):
+                # The Arrow setters of the C++ library do not know the precision_nms fields
+                return self.set_field(field_name, nw.from_native(data, allow_series=True).to_numpy())
             pycapsule = nw.from_native(data, allow_series=True).__arrow_c_stream__()
             _safe_call(
                 _LIB.LGBM_DatasetSetFieldFromArrowStream(
@@ -2916,6 +2924,8 @@ class Dataset:
                 ctypes.c_int(type_data),
             )
         )
+        if field_name.startswith("nms_"):
+            self._nms_fields[field_name] = data
         self.version += 1
         return self
 

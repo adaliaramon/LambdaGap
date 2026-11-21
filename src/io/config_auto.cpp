@@ -639,6 +639,7 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
   GetString(params, "lambdarank_target", &lambdarank_target);
 
   GetDouble(params, "lambdagap_weight", &lambdagap_weight);
+  CHECK_GE(lambdagap_weight, 0.0);
 
   if (GetString(params, "label_gain", &tmp_str)) {
     label_gain = Common::StringToArray<double>(tmp_str, ',');

@@ -319,6 +319,14 @@ bool CheckMultiClassObjective(const std::string& objective) {
 }
 
 void Config::CheckParamConflict(const std::unordered_map<std::string, std::string>& params) {
+  // The precision_nms options, checked here so that a typo fails before training
+  if (nms_tolerance_mode != std::string("absolute") && nms_tolerance_mode != std::string("relative")) {
+    Log::Fatal("Unknown nms_tolerance_mode: %s", nms_tolerance_mode.c_str());
+  }
+  if (nms_group_mode != std::string("best_row") && nms_group_mode != std::string("first_kept") &&
+      nms_group_mode != std::string("none")) {
+    Log::Fatal("Unknown nms_group_mode: %s", nms_group_mode.c_str());
+  }
   // check if objective, metric, and num_class match
   int num_class_check = num_class;
   bool objective_type_multiclass = CheckMultiClassObjective(objective) || (objective == std::string("custom") && num_class_check > 1);

@@ -1011,6 +1011,7 @@ struct Config {
   // descl2 = ``lambdagap-x-plus-plus``, LambdaGap-X++ approach
   std::string lambdarank_target = "ndcg";
 
+  // check = >=0.0
   // desc = used only in ``lambdarank`` application
   // desc = controls the weight used when using LambdaGap hybrid approaches
   double lambdagap_weight = 1.0;

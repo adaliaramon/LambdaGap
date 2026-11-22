@@ -1009,6 +1009,7 @@ struct Config {
   // descl2 = ``lambdagap-x-plus``, LambdaGap-X+ approach
   // descl2 = ``lambdagap-s-plus-plus``, LambdaGap-S++ approach
   // descl2 = ``lambdagap-x-plus-plus``, LambdaGap-X++ approach
+  // descl2 = ``lambdagap-s-plus-nms``, LambdaGap-S+ on the rows that non-maximum suppression keeps, for ``precision_nms``: it needs the ``nms_coordinate`` dataset field and ``nms_group_mode = none``, and reads ``nms_tolerance``, ``nms_tolerance_mode`` and the optional ``nms_tiebreak`` field
   std::string lambdarank_target = "ndcg";
 
   // check = >=0.0

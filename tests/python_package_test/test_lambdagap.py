@@ -437,3 +437,71 @@ def test_bad_options_fail_before_training(option, message):
     X, y, sizes = ranking_data()
     with pytest.raises(lgb.basic.LightGBMError, match=message):
         lgb.Dataset(X, y, group=sizes, params=base_params(**option)).construct()
+
+
+def nms_target_params(**extra):
+    params = base_params(
+        lambdarank_target="lambdagap-s-plus-nms",
+        lambdarank_truncation_level=3,
+        nms_tolerance=0.5,
+        nms_group_mode="none",
+    )
+    params.update(extra)
+    return params
+
+
+def nms_target_train(X, y, sizes, coordinates, params):
+    ds = lgb.Dataset(X, y, group=sizes, params=params).construct()
+    ds.set_field("nms_coordinate", coordinates)
+    return lgb.train(params, ds, 5)
+
+
+@pytest.mark.parametrize("discrete", [False, True])
+def test_nms_target_without_suppression_is_lambdagap_s_plus(discrete):
+    # Coordinates far apart: NMS keeps every row
+    X, y, sizes = ranking_data(discrete=discrete)
+    params = nms_target_params()
+    booster = nms_target_train(X, y, sizes, np.arange(len(y)) * 10.0, params)
+    plain, _ = train({**params, "lambdarank_target": "lambdagap-s-plus"}, X, y, sizes)
+    np.testing.assert_array_equal(booster.predict(X), plain.predict(X))
+
+
+def test_nms_target_ignores_suppressed_duplicates():
+    # Each query twice over, the copies after the originals with the same features, label and
+    # coordinate: the copies are suppressed, so the model is LambdaGap-S+ on the originals
+    X, y, sizes = ranking_data(discrete=True)
+    starts = query_starts(sizes)
+    rows = np.concatenate([np.r_[start:end, start:end] for start, end in zip(starts[:-1], starts[1:], strict=True)])
+    coordinates = np.arange(len(y)) * 10.0
+    params = nms_target_params(min_data_in_leaf=1, min_data_in_bin=1)
+    booster = nms_target_train(X[rows], y[rows], 2 * sizes, coordinates[rows], params)
+    plain, _ = train({**params, "lambdarank_target": "lambdagap-s-plus"}, X, y, sizes)
+    np.testing.assert_allclose(booster.predict(X), plain.predict(X))
+
+
+def test_nms_target_lifts_a_relevant_row_hidden_by_an_irrelevant_one():
+    # Per query: an irrelevant row, a relevant row within the tolerance of it, and two
+    # irrelevant rows far away. With equal scores the irrelevant row is kept first and hides
+    # the relevant one; the kept rows are all irrelevant, so only the pair between the hidden
+    # row and the row hiding it can move the scores
+    queries = 30
+    X = np.tile([[1.0], [0.0], [2.0], [2.0]], (queries, 1))
+    y = np.tile([0.0, 1.0, 0.0, 0.0], queries)
+    coordinates = np.tile([100.0, 100.1, 200.0, 300.0], queries)
+    sizes = np.full(queries, 4)
+    params = nms_target_params(lambdarank_truncation_level=1, min_data_in_leaf=1, min_data_in_bin=1)
+    booster = nms_target_train(X, y, sizes, coordinates, params)
+    score = booster.predict(X)
+    groups = np.zeros(len(y), dtype=np.int32)
+    assert reference_precision_nms(score, y, sizes, 1, groups, coordinates, None, 0.5, False, "none") == 1.0
+
+
+@pytest.mark.parametrize(
+    ("option", "message"),
+    [({"nms_group_mode": "best_row"}, "needs nms_group_mode none"), ({}, "needs the nms_coordinate field")],
+)
+def test_nms_target_fails_without_its_settings(option, message):
+    X, y, sizes = ranking_data()
+    params = nms_target_params(**option)
+    with pytest.raises(lgb.basic.LightGBMError, match=message):
+        lgb.train(params, lgb.Dataset(X, y, group=sizes, params=params), 1)

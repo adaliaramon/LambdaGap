@@ -17,6 +17,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace LightGBM {
@@ -40,6 +41,7 @@ enum class LambdaRankTarget {
   LAMBDAGAP_X_PLUS,
   LAMBDAGAP_S_PLUS_PLUS,
   LAMBDAGAP_X_PLUS_PLUS,
+  LAMBDAGAP_S_PLUS_NMS,
 };
 
 /*!
@@ -185,7 +187,8 @@ class LambdarankNDCG : public RankingObjective {
       {"lambdagap-s-plus", LambdaRankTarget::LAMBDAGAP_S_PLUS},
       {"lambdagap-x-plus", LambdaRankTarget::LAMBDAGAP_X_PLUS},
       {"lambdagap-s-plus-plus", LambdaRankTarget::LAMBDAGAP_S_PLUS_PLUS},
-      {"lambdagap-x-plus-plus", LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS}
+      {"lambdagap-x-plus-plus", LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS},
+      {"lambdagap-s-plus-nms", LambdaRankTarget::LAMBDAGAP_S_PLUS_NMS}
     };
     if (lambdarank_target_map.count(config.lambdarank_target) == 0) {
       Log::Fatal("Unknown lambdarank target '%s'", config.lambdarank_target.c_str());
@@ -210,6 +213,20 @@ class LambdarankNDCG : public RankingObjective {
       Log::Fatal("Sigmoid param %f should be greater than zero", sigmoid_);
     }
     lambdagap_weight_ = config.lambdagap_weight;
+    if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS_NMS) {
+      // The rows kept as precision_nms keeps them with nms_group_mode none
+      if (config.nms_group_mode != std::string("none")) {
+        Log::Fatal("lambdagap-s-plus-nms needs nms_group_mode none");
+      }
+      if (config.nms_tolerance_mode == std::string("absolute")) {
+        nms_relative_ = false;
+      } else if (config.nms_tolerance_mode == std::string("relative")) {
+        nms_relative_ = true;
+      } else {
+        Log::Fatal("Unknown nms_tolerance_mode: %s", config.nms_tolerance_mode.c_str());
+      }
+      nms_tolerance_ = config.nms_tolerance;
+    }
   }
 
   explicit LambdarankNDCG(const std::vector<std::string>& strs)
@@ -219,6 +236,8 @@ class LambdarankNDCG : public RankingObjective {
 
   void Init(const Metadata& metadata, data_size_t num_data) override {
     RankingObjective::Init(metadata, num_data);
+    // The NMS fields are read at each round, as they may be set after the booster is created
+    metadata_ = &metadata;
     DCGCalculator::CheckMetadata(metadata, num_queries_);
     DCGCalculator::CheckLabel(label_, num_data_);
     inverse_max_dcgs_.resize(num_queries_);
@@ -245,6 +264,64 @@ class LambdarankNDCG : public RankingObjective {
     ConstructSigmoidTable();
   }
 
+  void GetGradientsWithSampledQueries(const double* score, const data_size_t num_sampled_queries,
+                                      const data_size_t* sampled_query_indices, score_t* gradients,
+                                      score_t* hessians) const override {
+    // Checked here, not in the parallel loop over the queries
+    if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS_NMS && metadata_->nms_coordinates() == nullptr) {
+      Log::Fatal("lambdagap-s-plus-nms needs the nms_coordinate field");
+    }
+    RankingObjective::GetGradientsWithSampledQueries(score, num_sampled_queries, sampled_query_indices,
+                                                     gradients, hessians);
+  }
+
+  /*!
+  * \brief Greedy non-maximum suppression over rows sorted by decreasing score, as
+  *        precision_nms with nms_group_mode none. Replaces sorted_idx by the rows kept, in
+  *        order, and returns per kept position below the truncation level the first
+  *        relevant row it suppressed, if the kept row is not relevant (else -1)
+  */
+  std::vector<data_size_t> SuppressNonMaxima(data_size_t start, const label_t* label, const double* score,
+                                             std::vector<data_size_t>* sorted_idx) const {
+    const double* coordinates = metadata_->nms_coordinates() + start;
+    std::vector<data_size_t> hidden(std::min<size_t>(truncation_level_, sorted_idx->size()), -1);
+    std::map<double, data_size_t> kept_at;  // Coordinate of each row kept, to its position
+    std::vector<data_size_t> kept;
+    for (data_size_t idx : *sorted_idx) {
+      if (score[idx] == kMinScore) {
+        continue;
+      }
+      const double x = coordinates[idx];
+      // Every kept coordinate within the tolerance of x lies within w of it: with relative
+      // distances, max(|x|, |c|) <= |x| / (1 - tolerance). Widened, the exact test decides
+      double w = nms_tolerance_;
+      if (nms_relative_) {
+        w = nms_tolerance_ < 1.0 ? nms_tolerance_ * std::fabs(x) / (1.0 - nms_tolerance_)
+                                 : std::numeric_limits<double>::infinity();
+      }
+      w += 1e-9 * (1.0 + std::fabs(x));
+      data_size_t owner = -1;  // First kept position within the tolerance
+      for (auto it = kept_at.lower_bound(x - w); it != kept_at.end() && it->first <= x + w; ++it) {
+        const double c = it->first;
+        const double scale = std::max(std::fabs(x), std::fabs(c));
+        const double distance = nms_relative_ ? (scale == 0.0 ? 0.0 : std::fabs(x - c) / scale)
+                                              : std::fabs(x - c);
+        if (!(distance > nms_tolerance_) && (owner < 0 || it->second < owner)) {
+          owner = it->second;
+        }
+      }
+      if (owner < 0) {
+        kept_at[x] = static_cast<data_size_t>(kept.size());
+        kept.push_back(idx);
+      } else if (owner < static_cast<data_size_t>(hidden.size()) && label[idx] > 0 && label[kept[owner]] <= 0 &&
+                 hidden[owner] < 0) {
+        hidden[owner] = idx;
+      }
+    }
+    *sorted_idx = std::move(kept);
+    return hidden;
+  }
+
   inline void GetGradientsForOneQuery(data_size_t query_id, data_size_t cnt,
                                       const label_t* label, const double* score,
                                       score_t* lambdas,
@@ -254,6 +331,8 @@ class LambdarankNDCG : public RankingObjective {
       lambdas[i] = 0.0f;
       hessians[i] = 0.0f;
     }
+    // The NMS target: LambdaGap-S+ on the rows NMS keeps, plus the pairs of SuppressNonMaxima
+    const bool nms = lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS_NMS;
     // get sorted indices for scores
     std::vector<data_size_t> sorted_idx(cnt);
     for (data_size_t i = 0; i < cnt; ++i) {
@@ -289,9 +368,20 @@ class LambdarankNDCG : public RankingObjective {
         }
       }
     } else {
-      std::stable_sort(
-          sorted_idx.begin(), sorted_idx.end(),
-          [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
+      // The NMS target breaks ties by decreasing nms_tiebreak, then row order, as precision_nms
+      const double* tiebreaks = nms ? metadata_->nms_tiebreaks() : nullptr;
+      if (tiebreaks != nullptr) {
+        tiebreaks += query_boundaries_[query_id];
+        std::stable_sort(
+            sorted_idx.begin(), sorted_idx.end(),
+            [score, tiebreaks](data_size_t a, data_size_t b) {
+              return score[a] != score[b] ? score[a] > score[b] : tiebreaks[a] > tiebreaks[b];
+            });
+      } else {
+        std::stable_sort(
+            sorted_idx.begin(), sorted_idx.end(),
+            [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
+      }
       best_score = score[sorted_idx[0]];
       data_size_t worst_idx = cnt - 1;
       if (worst_idx > 0 && score[sorted_idx[worst_idx]] == kMinScore) {
@@ -299,6 +389,12 @@ class LambdarankNDCG : public RankingObjective {
       }
       worst_score = score[sorted_idx[worst_idx]];
     }
+    // From here on, the pairs are among the rows NMS keeps
+    std::vector<data_size_t> hidden;
+    if (nms) {
+      hidden = SuppressNonMaxima(query_boundaries_[query_id], label, score, &sorted_idx);
+    }
+    const data_size_t n = static_cast<data_size_t>(sorted_idx.size());
     // get best and worst score
     double sum_lambdas = 0.0;
 
@@ -312,10 +408,10 @@ class LambdarankNDCG : public RankingObjective {
       case LambdaRankTarget::LAMBDALOSS_BNDCG:
       case LambdaRankTarget::LAMBDALOSS_BNDCG_PLUS_PLUS:
       case LambdaRankTarget::PRECISION:
-        i_end = std::min(cnt - 1, truncation_level_);
+        i_end = std::min(n - 1, truncation_level_);
         break;
       default:
-        i_end = cnt - 1;
+        i_end = n - 1;
     }
 
     for (data_size_t i = 0; i < i_end; ++i) {
@@ -326,50 +422,51 @@ class LambdarankNDCG : public RankingObjective {
       // Exclude pairs guaranteed to have 0 contribution to the gradient. With i < k, a
       // pair with j < k too is skipped by the precision targets: swapping two rows of the
       // top k does not change precision@k, so their (i < k) term only holds for j >= k.
-      // i + truncation_level_ capped at cnt, so a huge truncation level cannot overflow
+      // i + truncation_level_ capped at n, so a huge truncation level cannot overflow
       const data_size_t i_plus_k = static_cast<data_size_t>(
-          std::min<int64_t>(static_cast<int64_t>(i) + truncation_level_, cnt));
+          std::min<int64_t>(static_cast<int64_t>(i) + truncation_level_, n));
       data_size_t start;
       data_size_t end;
       switch (lambdarank_target_) {
         case LambdaRankTarget::PRECISION:
           start = truncation_level_;
-          end = cnt;
+          end = n;
           break;
         case LambdaRankTarget::LAMBDAGAP_S_PLUS:
+        case LambdaRankTarget::LAMBDAGAP_S_PLUS_NMS:
           // Beyond the truncation level, only the pair at distance truncation_level_
           // has a non-zero weight
           if (i >= truncation_level_) {
             start = i_plus_k;
-            end = std::min(start + 1, cnt);
+            end = std::min(start + 1, n);
           } else {
             start = truncation_level_;
-            end = cnt;
+            end = n;
           }
           break;
         case LambdaRankTarget::LAMBDAGAP_X_PLUS:
           // Beyond the truncation level, only pairs at distance truncation_level_ or
           // more have a non-zero weight
           start = i >= truncation_level_ ? i_plus_k : truncation_level_;
-          end = cnt;
+          end = n;
           break;
         case LambdaRankTarget::ARP_K:
         case LambdaRankTarget::LAMBDAGAP_S_PLUS_PLUS:
         case LambdaRankTarget::LAMBDAGAP_X_PLUS_PLUS:
           start = std::max(i + 1, truncation_level_);
-          end = cnt;
+          end = n;
           break;
         case LambdaRankTarget::LAMBDAGAP_S:
           start = i_plus_k;
-          end = std::min(start + 1, cnt);
+          end = std::min(start + 1, n);
           break;
         case LambdaRankTarget::LAMBDAGAP_X:
           start = i_plus_k;
-          end = cnt;
+          end = n;
           break;
         default:
           start = i + 1;
-          end = cnt;
+          end = n;
       }
 
       for (data_size_t j = start; j < end; ++j) {
@@ -432,7 +529,8 @@ class LambdarankNDCG : public RankingObjective {
                    lambdarank_target_ == LambdaRankTarget::BIN_RANKNET ||
                    lambdarank_target_ == LambdaRankTarget::RANKNET) {
           delta_pair = 1;
-        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS) {
+        } else if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS ||
+                   lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_S_PLUS_NMS) {
           delta_pair = (j - i == truncation_level_) * lambdagap_weight_ + (i < truncation_level_);
         } else if (lambdarank_target_ == LambdaRankTarget::LAMBDAGAP_X_PLUS) {
           delta_pair = (j - i >= truncation_level_) * lambdagap_weight_ + (i < truncation_level_);
@@ -474,6 +572,29 @@ class LambdarankNDCG : public RankingObjective {
         // lambda is negative, so use minus to accumulate
         sum_lambdas -= 2 * p_lambda;
       }
+    }
+    // The NMS target: a relevant row hidden by a kept row below the truncation level that is
+    // not relevant goes above it, with the weight of a pair across the cutoff, 1 + lambdagap_weight
+    for (size_t p = 0; p < hidden.size(); ++p) {
+      if (hidden[p] < 0) {
+        continue;
+      }
+      const data_size_t high = hidden[p];
+      const data_size_t low = sorted_idx[p];
+      const double delta_score = score[high] - score[low];
+      double delta_pair = 1.0 + lambdagap_weight_;
+      if (norm_ && best_score != worst_score) {
+        delta_pair /= (0.01f + fabs(delta_score));
+      }
+      double p_lambda = GetSigmoid(delta_score);
+      double p_hessian = p_lambda * (1.0f - p_lambda);
+      p_lambda *= -sigmoid_ * delta_pair;
+      p_hessian *= sigmoid_ * sigmoid_ * delta_pair;
+      lambdas[low] -= static_cast<score_t>(p_lambda);
+      hessians[low] += static_cast<score_t>(p_hessian);
+      lambdas[high] += static_cast<score_t>(p_lambda);
+      hessians[high] += static_cast<score_t>(p_hessian);
+      sum_lambdas -= 2 * p_lambda;
     }
     if (norm_ && sum_lambdas > 0) {
       double norm_factor = std::log2(1 + sum_lambdas) / sum_lambdas;
@@ -596,6 +717,10 @@ class LambdarankNDCG : public RankingObjective {
   double sigmoid_table_idx_factor_;
   /*! \brief LambdaGap weight */
   double lambdagap_weight_ = 0.0;
+  /*! \brief For the NMS target: the dataset fields, the tolerance and its mode */
+  const Metadata* metadata_ = nullptr;
+  double nms_tolerance_ = 0.0;
+  bool nms_relative_ = false;
 };
 
 /*!

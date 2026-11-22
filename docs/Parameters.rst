@@ -1248,6 +1248,8 @@ Objective Parameters
 
       -  ``lambdagap-x-plus-plus``, LambdaGap-X++ approach
 
+      -  ``lambdagap-s-plus-nms``, LambdaGap-S+ on the rows that non-maximum suppression keeps, for ``precision_nms``: it needs the ``nms_coordinate`` dataset field and ``nms_group_mode = none``, and reads ``nms_tolerance``, ``nms_tolerance_mode`` and the optional ``nms_tiebreak`` field
+
 -  ``lambdagap_weight`` :raw-html:`<a id="lambdagap_weight" title="Permalink to this parameter" href="#lambdagap_weight">&#x1F517;&#xFE0E;</a>`, default = ``1.0``, type = double, constraints: ``lambdagap_weight >= 0.0``
 
    -  used only in ``lambdarank`` application

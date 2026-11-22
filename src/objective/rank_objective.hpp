@@ -267,11 +267,13 @@ class LambdarankNDCG : public RankingObjective {
         lambdarank_target_ == LambdaRankTarget::LAMBDALOSS_ARP2) {
       if (lambdarank_target_ == LambdaRankTarget::PRECISION) {
         // Only the top k apart from the rest. Clamped: a query may have fewer documents
-        // than the truncation level
+        // than the truncation level. Equal scores by row order, as a stable sort: else
+        // which tied rows enter the top k would depend on the standard library
         std::nth_element(
             sorted_idx.begin(), sorted_idx.begin() + std::min(truncation_level_, cnt) - 1,
-            sorted_idx.end(),
-            [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
+            sorted_idx.end(), [score](data_size_t a, data_size_t b) {
+              return score[a] > score[b] || (score[a] == score[b] && a < b);
+            });
       }
       // The others need no order: their pair weights depend on neither i nor j
       best_score = *std::max_element(score, score + cnt);

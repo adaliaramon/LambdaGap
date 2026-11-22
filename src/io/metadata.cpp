@@ -6,8 +6,10 @@
 #include <LightGBM/dataset.h>
 #include <LightGBM/utils/common.h>
 
+#include <cmath>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -42,6 +44,14 @@ void SetRowField(const T* data, data_size_t len, data_size_t num_data, const cha
   }
   if (num_data != len) {
     Log::Fatal("Length of %s (%i) doesn't match data size (%i)", name, len, num_data);
+  }
+  if constexpr (std::is_floating_point<T>::value) {
+    // NaN would compare false both ways: no order to sort by, no distance to suppress by
+    for (data_size_t i = 0; i < len; ++i) {
+      if (!std::isfinite(data[i])) {
+        Log::Fatal("%s must be finite (row %i)", name, i);
+      }
+    }
   }
   field->assign(data, data + len);
 }

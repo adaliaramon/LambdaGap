@@ -405,6 +405,17 @@ def test_nms_field_of_the_wrong_length_fails():
         ds.set_field("nms_coordinate", coordinates[:-1])
 
 
+@pytest.mark.parametrize("field", ["nms_coordinate", "nms_tiebreak"])
+@pytest.mark.parametrize("value", [np.nan, np.inf])
+def test_nms_field_that_is_not_finite_fails(field, value):
+    X, y, sizes = ranking_data()
+    _, coordinates, _ = nms_fields(len(y))
+    coordinates[3] = value
+    ds = lgb.Dataset(X, y, group=sizes, params=base_params()).construct()
+    with pytest.raises(lgb.basic.LightGBMError, match=f"{field} must be finite"):
+        ds.set_field(field, coordinates)
+
+
 def test_save_binary_does_not_keep_the_nms_fields(tmp_path):
     X, y, sizes = ranking_data()
     _, coordinates, _ = nms_fields(len(y))

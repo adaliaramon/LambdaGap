@@ -372,16 +372,15 @@ class LambdarankNDCG : public RankingObjective {
       const double* tiebreaks = nms ? metadata_->nms_tiebreaks() : nullptr;
       if (tiebreaks != nullptr) {
         tiebreaks += query_boundaries_[query_id];
-        std::stable_sort(
-            sorted_idx.begin(), sorted_idx.end(),
-            [score, tiebreaks](data_size_t a, data_size_t b) {
-              return score[a] != score[b] ? score[a] > score[b] : tiebreaks[a] > tiebreaks[b];
-            });
-      } else {
-        std::stable_sort(
-            sorted_idx.begin(), sorted_idx.end(),
-            [score](data_size_t a, data_size_t b) { return score[a] > score[b]; });
       }
+      std::stable_sort(
+          sorted_idx.begin(), sorted_idx.end(),
+          [score, tiebreaks](data_size_t a, data_size_t b) {
+            if (score[a] != score[b] || tiebreaks == nullptr) {
+              return score[a] > score[b];
+            }
+            return tiebreaks[a] > tiebreaks[b];
+          });
       best_score = score[sorted_idx[0]];
       data_size_t worst_idx = cnt - 1;
       if (worst_idx > 0 && score[sorted_idx[worst_idx]] == kMinScore) {
@@ -393,10 +392,35 @@ class LambdarankNDCG : public RankingObjective {
     std::vector<data_size_t> hidden;
     if (nms) {
       hidden = SuppressNonMaxima(query_boundaries_[query_id], label, score, &sorted_idx);
+      // As LambdaGap-S+ on the kept rows, whose order skips the rows at kMinScore
+      if (!sorted_idx.empty()) {
+        best_score = score[sorted_idx.front()];
+        worst_score = score[sorted_idx.back()];
+      }
     }
     const data_size_t n = static_cast<data_size_t>(sorted_idx.size());
     // get best and worst score
     double sum_lambdas = 0.0;
+    // Adds the gradients of one pair, high above low
+    const auto add_pair = [&](data_size_t high, data_size_t low, double delta_pair) {
+      const double delta_score = score[high] - score[low];
+      // regular the delta_pair by score distance
+      if (norm_ && best_score != worst_score) {
+        delta_pair /= (0.01f + fabs(delta_score));
+      }
+      // calculate lambda for this pair
+      double p_lambda = GetSigmoid(delta_score);
+      double p_hessian = p_lambda * (1.0f - p_lambda);
+      // update
+      p_lambda *= -sigmoid_ * delta_pair;
+      p_hessian *= sigmoid_ * sigmoid_ * delta_pair;
+      lambdas[low] -= static_cast<score_t>(p_lambda);
+      hessians[low] += static_cast<score_t>(p_hessian);
+      lambdas[high] += static_cast<score_t>(p_lambda);
+      hessians[high] += static_cast<score_t>(p_hessian);
+      // lambda is negative, so use minus to accumulate
+      sum_lambdas -= 2 * p_lambda;
+    };
 
     // Pairs must include at least one document within the top k for some metrics
     data_size_t i_end;
@@ -496,9 +520,6 @@ class LambdarankNDCG : public RankingObjective {
         const data_size_t high = sorted_idx[high_rank];
         const data_size_t low = sorted_idx[low_rank];
 
-        const double high_score = score[high];
-        const double low_score = score[low];
-        const double delta_score = high_score - low_score;
 
         // The pieces of the NDCG-like pair weights, computed only by the targets using them
         const auto gain_gap = [&]() {
@@ -554,23 +575,7 @@ class LambdarankNDCG : public RankingObjective {
           continue;
         }
 
-        // regular the delta_pair by score distance
-        if (norm_ && best_score != worst_score) {
-          delta_pair /= (0.01f + fabs(delta_score));
-        }
-
-        // calculate lambda for this pair
-        double p_lambda = GetSigmoid(delta_score);
-        double p_hessian = p_lambda * (1.0f - p_lambda);
-        // update
-        p_lambda *= -sigmoid_ * delta_pair;
-        p_hessian *= sigmoid_ * sigmoid_ * delta_pair;
-        lambdas[low] -= static_cast<score_t>(p_lambda);
-        hessians[low] += static_cast<score_t>(p_hessian);
-        lambdas[high] += static_cast<score_t>(p_lambda);
-        hessians[high] += static_cast<score_t>(p_hessian);
-        // lambda is negative, so use minus to accumulate
-        sum_lambdas -= 2 * p_lambda;
+        add_pair(high, low, delta_pair);
       }
     }
     // The NMS target: a relevant row hidden by a kept row below the truncation level that is
@@ -579,22 +584,7 @@ class LambdarankNDCG : public RankingObjective {
       if (hidden[p] < 0) {
         continue;
       }
-      const data_size_t high = hidden[p];
-      const data_size_t low = sorted_idx[p];
-      const double delta_score = score[high] - score[low];
-      double delta_pair = 1.0 + lambdagap_weight_;
-      if (norm_ && best_score != worst_score) {
-        delta_pair /= (0.01f + fabs(delta_score));
-      }
-      double p_lambda = GetSigmoid(delta_score);
-      double p_hessian = p_lambda * (1.0f - p_lambda);
-      p_lambda *= -sigmoid_ * delta_pair;
-      p_hessian *= sigmoid_ * sigmoid_ * delta_pair;
-      lambdas[low] -= static_cast<score_t>(p_lambda);
-      hessians[low] += static_cast<score_t>(p_hessian);
-      lambdas[high] += static_cast<score_t>(p_lambda);
-      hessians[high] += static_cast<score_t>(p_hessian);
-      sum_lambdas -= 2 * p_lambda;
+      add_pair(hidden[p], sorted_idx[p], 1.0 + lambdagap_weight_);
     }
     if (norm_ && sum_lambdas > 0) {
       double norm_factor = std::log2(1 + sum_lambdas) / sum_lambdas;
